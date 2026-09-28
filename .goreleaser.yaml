@@ -1,0 +1,81 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: radaro
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: radaro
+    main: ./cmd/radaro
+    binary: radaro
+    env:
+      - CGO_ENABLED=0 # pure-Go SQLite: static binaries for every target
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: radaro
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - NOTICE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+# `brews` (a formula) is deprecated in favour of casks, but casks are macOS-only
+# and radaro targets Linux too, so it stays a formula.
+# The formula lives in this repository (Formula/radaro.rb), so the release
+# workflow's own GITHUB_TOKEN can update it:
+#   brew tap verrloren/radaro https://github.com/verrloren/radaro
+#   brew install radaro
+brews:
+  - name: radaro
+    repository:
+      owner: verrloren
+      name: radaro
+      branch: main
+    directory: Formula
+    commit_author:
+      name: radaro-release
+      email: radaro-release@users.noreply.github.com
+    commit_msg_template: "Homebrew formula for {{ .ProjectName }} {{ .Tag }}"
+    homepage: https://github.com/verrloren/radaro
+    description: Self-hosted social listening and human-approved publishing in one binary
+    license: MIT
+    install: |
+      bin.install "radaro"
+    test: |
+      system "#{bin}/radaro", "--version"
+
+release:
+  github:
+    owner: verrloren
+    name: radaro
+  footer: |
+    ## Install
+
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/verrloren/radaro/main/install.sh | sh
+    ```
+
+    or `brew tap verrloren/radaro https://github.com/verrloren/radaro && brew install radaro`,
+    or download an archive below (verify it against `checksums.txt`).

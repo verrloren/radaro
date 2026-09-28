@@ -17,7 +17,7 @@ import (
 // mentions must exist, or agents will call things that fail.
 func TestSkillMatchesCLI(t *testing.T) {
 	root := newRoot()
-	cmdRE := regexp.MustCompile("radaro ((?:[a-z][a-z-]* ?)+)((?:[^`\\n|]*))")
+	cmdRE := regexp.MustCompile("(?m)(?:^|[\\s`(])radaro ((?:[a-z][a-z-]* ?)+)((?:[^`\\n|]*))")
 	flagRE := regexp.MustCompile(`--([a-z][a-z-]*)`)
 	checked := 0
 	err := fs.WalkDir(skills.Radaro(), ".", func(path string, d fs.DirEntry, err error) error {

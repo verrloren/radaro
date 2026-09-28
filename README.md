@@ -12,17 +12,27 @@
 - **Publishing with a human in the loop.** Drafts must be approved before `radaro publish` sends them. Replies go into the original thread, and engagement metrics are read back.
 - **Agent-friendly CLI.** Every read command supports `--json`, so a coding agent (Claude Code, Codex, …) can find opportunities and write drafts for you to approve.
 
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/verrloren/radaro/main/install.sh | sh
+```
+
+The script picks the right binary for your OS and CPU (Linux and macOS, amd64 and arm64), verifies its checksum, and installs it to `/usr/local/bin` or `~/.local/bin`. Other options:
+
+- **Homebrew (macOS and Linux):** `brew tap verrloren/radaro https://github.com/verrloren/radaro && brew install radaro`
+- **Windows or manual:** download an archive from [Releases](https://github.com/verrloren/radaro/releases) and check it against `checksums.txt`.
+- **From source:** `go install github.com/verrloren/radaro/cmd/radaro@latest` (Go 1.25+).
+
 ## Quickstart
 
 ```bash
-go install github.com/verrloren/radaro/cmd/radaro@latest
-
 radaro demo                         # synthetic dataset → dashboard at http://127.0.0.1:8042
 radaro track "arch linux"           # live scan (Hacker News + Bluesky by default)
 radaro serve                        # open the dashboard
 ```
 
-Or build from source with `make build`, or run it in Docker with `docker compose up -d`.
+To build from source, run `make build`. To run it in Docker, use `docker compose up -d`.
 
 All state lives in one database in your data directory (`~/.local/share/radaro/radaro.db` on Linux, `~/Library/Application Support/radaro` on macOS, `%LocalAppData%\radaro` on Windows), so it is shared across working directories. Override the directory with `RADARO_HOME` or the database with `--db` / `RADARO_DB`. A `.env` there (or in the current directory) is loaded automatically. `radaro status` shows what is set up.
 
