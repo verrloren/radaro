@@ -45,8 +45,9 @@ changelog:
 # and radaro targets Linux too, so it stays a formula.
 # The formula lives in this repository (Formula/radaro.rb), so the release
 # workflow's own GITHUB_TOKEN can update it:
+#   brew trust --formula verrloren/radaro/radaro   (Homebrew 6+)
 #   brew tap verrloren/radaro https://github.com/verrloren/radaro
-#   brew install radaro
+#   brew install verrloren/radaro/radaro
 brews:
   - name: radaro
     repository:
@@ -77,5 +78,12 @@ release:
     curl -fsSL https://raw.githubusercontent.com/verrloren/radaro/main/install.sh | sh
     ```
 
-    or `brew tap verrloren/radaro https://github.com/verrloren/radaro && brew install radaro`,
-    or download an archive below (verify it against `checksums.txt`).
+    or with Homebrew (Homebrew 6+ needs the `brew trust` line):
+
+    ```bash
+    brew trust --formula verrloren/radaro/radaro
+    brew tap verrloren/radaro https://github.com/verrloren/radaro
+    brew install verrloren/radaro/radaro
+    ```
+
+    or download an archive below and verify it against `checksums.txt`.

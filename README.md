@@ -20,7 +20,12 @@ curl -fsSL https://raw.githubusercontent.com/verrloren/radaro/main/install.sh | 
 
 The script picks the right binary for your OS and CPU (Linux and macOS, amd64 and arm64), verifies its checksum, and installs it to `/usr/local/bin` or `~/.local/bin`. Other options:
 
-- **Homebrew (macOS and Linux):** `brew tap verrloren/radaro https://github.com/verrloren/radaro && brew install radaro`
+- **Homebrew (macOS and Linux):**
+  ```bash
+  brew trust --formula verrloren/radaro/radaro   # Homebrew 6+ refuses untrusted third-party formulae; skip on older versions
+  brew tap verrloren/radaro https://github.com/verrloren/radaro
+  brew install verrloren/radaro/radaro
+  ```
 - **Windows or manual:** download an archive from [Releases](https://github.com/verrloren/radaro/releases) and check it against `checksums.txt`.
 - **From source:** `go install github.com/verrloren/radaro/cmd/radaro@latest` (Go 1.25+).
 

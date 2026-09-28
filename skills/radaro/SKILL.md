@@ -24,7 +24,7 @@ You do the thinking and the writing. Radaro supplies the data, keeps the drafts 
 radaro status --json      # version, database path, sources, connected accounts, drafts by status
 ```
 
-- **`radaro` is missing:** tell the user to install it with `curl -fsSL https://raw.githubusercontent.com/verrloren/radaro/main/install.sh | sh` (or `brew tap verrloren/radaro https://github.com/verrloren/radaro && brew install radaro`) and stop.
+- **`radaro` is missing:** tell the user to install it with `curl -fsSL https://raw.githubusercontent.com/verrloren/radaro/main/install.sh | sh` (or via Homebrew; see the README at github.com/verrloren/radaro) and stop.
 - **The platform the user wants has no connected account:** give the matching connect command (see [references/platforms.md](references/platforms.md#connecting-accounts)). You can still find opportunities and write drafts without an account. Only publishing needs one.
 
 ## 1. Understand what is being promoted
