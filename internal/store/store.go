@@ -24,7 +24,7 @@ const DefaultProjectID int64 = 1
 // timeLayout is fixed-width UTC so stored timestamps sort lexically.
 const timeLayout = "2006-01-02T15:04:05.000000Z"
 
-const schemaVersion = 1
+const schemaVersion = 2
 
 const schema = `
 CREATE TABLE IF NOT EXISTS mentions (
@@ -109,6 +109,49 @@ CREATE TABLE IF NOT EXISTS threshold_alerts (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_threshold_alert_active
     ON threshold_alerts(query, event_type, target_key) WHERE cleared_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS accounts (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    platform    TEXT NOT NULL,
+    handle      TEXT NOT NULL,
+    credentials TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    UNIQUE (platform, handle)
+);
+
+CREATE TABLE IF NOT EXISTS drafts (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    platform     TEXT NOT NULL,
+    account_id   INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
+    kind         TEXT NOT NULL CHECK (kind IN ('post', 'reply')),
+    community    TEXT,
+    title        TEXT,
+    body         TEXT NOT NULL,
+    reply_to     TEXT,
+    query        TEXT,
+    mention_id   TEXT,
+    status       TEXT NOT NULL,
+    remote_id    TEXT,
+    remote_url   TEXT,
+    error        TEXT,
+    metrics      TEXT,
+    metrics_at   TEXT,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    approved_at  TEXT,
+    published_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_drafts_status ON drafts(status, created_at);
+
+CREATE TABLE IF NOT EXISTS activity (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    at       TEXT NOT NULL,
+    action   TEXT NOT NULL,
+    draft_id INTEGER,
+    detail   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_activity_at ON activity(at);
 `
 
 // Store wraps one SQLite database.

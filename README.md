@@ -1,6 +1,6 @@
 # Radaro
 
-**Self-hosted social listening in one binary.** Track what people say about a keyword, brand or product across Hacker News, Reddit, Bluesky, Mastodon, Stack Overflow, RSS, X and YouTube. Radaro scores sentiment, clusters themes and shows it all in a local dashboard. It has no account and no telemetry, and the SQLite database stays on your machine.
+**Self-hosted social listening and publishing in one binary.** Track what people say about a keyword, brand or product across Hacker News, Reddit, Bluesky, Mastodon, Stack Overflow, RSS, X and YouTube. Radaro scores sentiment, clusters themes and shows it all in a local dashboard. When you want to answer a thread or announce something, draft the post, approve it, and publish it to Reddit, Bluesky, Mastodon or Dev.to from the same binary. It has no account and no telemetry, and the SQLite database stays on your machine.
 
 ![Radaro dashboard](docs/dashboard.png)
 
@@ -9,7 +9,8 @@
 - **Incremental + backfill scanning.** Durable per-source cursors catch up new mentions and walk back through history without re-fetching.
 - **Local analysis.** Sentiment (lexicon with negation, intensifiers and contrast) and theme clustering run without any model. An LLM (Anthropic, OpenAI-compatible or local Ollama) is optional.
 - **Alerts.** Slack / generic webhook and SMTP email for new negative mentions, volume spikes and sentiment drops. Delivery is durable: failed alerts retry on the next scan.
-- **Agent-friendly CLI.** Every read command supports `--json`.
+- **Publishing with a human in the loop.** Drafts must be approved before `radaro publish` sends them. Replies go into the original thread, and engagement metrics are read back.
+- **Agent-friendly CLI.** Every read command supports `--json`, so a coding agent (Claude Code, Codex, …) can find opportunities and write drafts for you to approve.
 
 ## Quickstart
 
@@ -37,6 +38,13 @@ Or build from source with `make build`, or run it in Docker with `docker compose
 | `radaro export [keyword]` | Full records as JSON or CSV (`-f csv -o file.csv`) |
 | `radaro sources` | Available sources and whether they are configured |
 | `radaro test-alert` | Send a synthetic alert (`--transport webhook\|email`, `--kind negative\|volume\|sentiment`) |
+| `radaro connect bluesky\|mastodon\|devto\|reddit` | Connect a publishing account |
+| `radaro accounts` | List connected accounts (`accounts remove <id>`) |
+| `radaro opportunities [keyword]` | Recent mentions that have no draft yet (`--days`, `--source`) |
+| `radaro draft add\|list\|show\|edit\|approve\|skip` | Write and review posts and replies |
+| `radaro publish <draft-id>` | Publish an approved draft |
+| `radaro stats` | Engagement of everything published |
+| `radaro activity` | Log of what was drafted, approved and published |
 
 Global flags: `--db <path>` (default `radaro.db` or `$RADARO_DB`) and `--json`.
 
@@ -63,6 +71,31 @@ Set `RADARO_WEBHOOK_URL` (a Slack incoming webhook or any HTTP endpoint), or set
 - optional thresholds fire on a **volume spike** (`RADARO_ALERT_VOLUME_MULTIPLIER`) or a **net-sentiment drop** (`RADARO_ALERT_SENTIMENT_DROP`), compared with the preceding windows, with a cooldown.
 
 Delivery state lives in SQLite, so nothing is sent twice and failures are retried. Check your setup with `radaro test-alert`.
+
+## Publishing
+
+Radaro talks to each platform's API directly. You connect your own accounts, and credentials stay in the local database, which is made readable only by you.
+
+| Platform | Connect | Posts | Replies | Metrics |
+|---|---|---|---|---|
+| Bluesky | `radaro connect bluesky --handle you.bsky.social` + an [app password](https://bsky.app/settings/app-passwords) | ✓ (links and hashtags are clickable) | ✓ | likes, reposts, replies, quotes |
+| Mastodon | `radaro connect mastodon --instance mastodon.social` + an access token (Preferences → Development, scopes `read write:statuses`) | ✓ | ✓ (remote threads are resolved) | favourites, reblogs, replies |
+| Reddit | create an app at [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps) with redirect `http://127.0.0.1:8765/callback`, then `radaro connect reddit --client-id <id>` and approve in the browser | ✓ self posts | ✓ posts and comments | score, comments, upvote ratio |
+| Dev.to | `radaro connect devto` + an API key (Settings → Extensions) | ✓ articles (`--community` = tags) | — | views, reactions, comments |
+
+Secrets are read from a hidden prompt, or from stdin when piped (`echo "$TOKEN" | radaro connect devto`).
+
+```bash
+radaro track "your-product" --sources hackernews,bluesky,reddit
+radaro opportunities --days 7                  # threads worth answering
+radaro draft add --platform reddit --mention <id> --body-file reply.md   # reply in that thread
+radaro draft add --platform bluesky --body "Radaro 0.2 is out: https://…"
+radaro draft show 1 && radaro draft approve 1  # nothing is sent before approval
+radaro publish 1
+radaro stats
+```
+
+Drafts go `draft → approved → publishing → published` (or `failed`, which you can approve again after fixing). A draft is claimed before the network call, so a crash cannot silently post it twice. Editing an approved draft sends it back to review. Follow each community's rules: automated self-promotion gets accounts banned.
 
 ## HTTP API
 

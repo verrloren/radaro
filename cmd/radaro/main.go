@@ -26,6 +26,15 @@ type app struct {
 	dbFlag   string
 	jsonFlag bool
 	cfg      *config.Config
+	cmdCtx   context.Context
+}
+
+// ctx is the running command's context (cancelled on Ctrl-C).
+func (a *app) ctx() context.Context {
+	if a.cmdCtx == nil {
+		return context.Background()
+	}
+	return a.cmdCtx
 }
 
 // exitError carries a non-zero exit code without an extra error message.
@@ -65,6 +74,7 @@ func newRoot() *cobra.Command {
 				cfg.DBPath = a.dbFlag
 			}
 			a.cfg = cfg
+			a.cmdCtx = cmd.Context()
 			return nil
 		},
 	}
@@ -73,6 +83,8 @@ func newRoot() *cobra.Command {
 	root.AddCommand(
 		a.demoCmd(), a.trackCmd(), a.backfillCmd(), a.watchCmd(), a.reportCmd(), a.serveCmd(),
 		a.sourcesCmd(), a.projectCmd(), a.exportCmd(), a.testAlertCmd(),
+		a.connectCmd(), a.accountsCmd(), a.opportunitiesCmd(), a.draftCmd(), a.publishCmd(),
+		a.statsCmd(), a.activityCmd(),
 	)
 	return root
 }
