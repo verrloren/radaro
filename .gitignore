@@ -1,0 +1,13 @@
+# binaries
+/radaro
+/dist/
+*.exe
+
+# local data and secrets
+*.db
+*.db-shm
+*.db-wal
+.env
+
+# web
+web/node_modules/

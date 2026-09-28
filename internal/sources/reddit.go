@@ -1,0 +1,115 @@
+package sources
+
+import (
+	"context"
+	"errors"
+	"math"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/verrloren/radaro/internal/model"
+)
+
+var (
+	redditAPI      = "https://oauth.reddit.com/search"
+	redditTokenAPI = "https://www.reddit.com/api/v1/access_token"
+)
+
+// Reddit searches posts via the OAuth Data API. Anonymous JSON search is no
+// longer reliable, so it needs an app client or an existing bearer token.
+type Reddit struct {
+	ClientID     string
+	ClientSecret string
+	AccessToken  string // minted once and reused across backfill pages
+}
+
+func (s *Reddit) FetchPage(ctx context.Context, query string, limit int, cursor string, since time.Time) (Page, error) {
+	if s.AccessToken == "" {
+		token, err := s.appToken(ctx)
+		if err != nil {
+			return Page{}, err
+		}
+		s.AccessToken = token
+	}
+	params := url.Values{
+		"q":     {query},
+		"limit": {strconv.Itoa(minInt(limit, 100))},
+		"sort":  {"new"},
+		"type":  {"link"},
+	}
+	if cursor != "" {
+		params.Set("after", cursor)
+	}
+	var data struct {
+		Data struct {
+			Children []struct {
+				Data struct {
+					Author     string   `json:"author"`
+					Title      string   `json:"title"`
+					Selftext   string   `json:"selftext"`
+					Permalink  string   `json:"permalink"`
+					URL        string   `json:"url"`
+					CreatedUTC float64  `json:"created_utc"`
+					Score      *float64 `json:"score"`
+				} `json:"data"`
+			} `json:"children"`
+			After string `json:"after"`
+		} `json:"data"`
+	}
+	headers := map[string]string{"Authorization": "Bearer " + s.AccessToken}
+	if err := getJSON(ctx, redditAPI, params, headers, &data); err != nil {
+		return Page{}, err
+	}
+
+	var mentions []model.Mention
+	for _, child := range data.Data.Children {
+		d := child.Data
+		link := d.URL
+		if d.Permalink != "" {
+			link = "https://www.reddit.com" + d.Permalink
+		}
+		var score *int64
+		if d.Score != nil {
+			score = model.Int(int64(math.Round(*d.Score)))
+		}
+		m := model.Mention{
+			Source:    "reddit",
+			Query:     query,
+			Author:    model.Str(d.Author),
+			Title:     model.Str(d.Title),
+			Text:      d.Selftext,
+			URL:       model.Str(link),
+			CreatedAt: unixTime(int64(d.CreatedUTC)),
+			Score:     score,
+		}
+		m.Normalize()
+		mentions = append(mentions, m)
+	}
+	return Page{Mentions: mentions, NextCursor: data.Data.After}, nil
+}
+
+func (s *Reddit) appToken(ctx context.Context) (string, error) {
+	if s.ClientID == "" || s.ClientSecret == "" {
+		return "", errors.New("reddit requires OAuth: set RADARO_REDDIT_CLIENT_ID and RADARO_REDDIT_CLIENT_SECRET, or RADARO_REDDIT_ACCESS_TOKEN")
+	}
+	form := url.Values{"grant_type": {"client_credentials"}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, redditTokenAPI, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", err
+	}
+	req.SetBasicAuth(s.ClientID, s.ClientSecret)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	var out struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := doJSON(req, nil, &out); err != nil {
+		return "", err
+	}
+	if out.AccessToken == "" {
+		return "", errors.New("reddit OAuth response did not contain an access token")
+	}
+	return out.AccessToken, nil
+}
