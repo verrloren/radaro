@@ -1,0 +1,19 @@
+{
+  "name": "radaro",
+  "owner": {
+    "name": "Radaro contributors",
+    "url": "https://github.com/verrloren/radaro"
+  },
+  "metadata": {
+    "description": "Radaro: self-hosted social listening and human-approved publishing, driven by your coding agent"
+  },
+  "plugins": [
+    {
+      "name": "radaro",
+      "description": "Find, draft, approve and publish posts about your project with the radaro CLI.",
+      "source": "./",
+      "strict": false,
+      "skills": ["./skills/radaro"]
+    }
+  ]
+}

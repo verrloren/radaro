@@ -1,17 +1,21 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestDefaults(t *testing.T) {
 	t.Chdir(t.TempDir()) // no stray .env
+	home := t.TempDir()
+	t.Setenv("RADARO_HOME", home)
 	c, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.DBPath != "radaro.db" || strings.Join(c.Sources, ",") != "hackernews,bluesky" || c.PerSourceLimit != 50 {
+	if c.DBPath != filepath.Join(home, "radaro.db") || strings.Join(c.Sources, ",") != "hackernews,bluesky" || c.PerSourceLimit != 50 {
 		t.Fatalf("defaults %+v", c)
 	}
 	if c.SourceOptions.MastodonInstance != "mastodon.social" || c.SMTPSecurity != "starttls" {
@@ -19,8 +23,23 @@ func TestDefaults(t *testing.T) {
 	}
 }
 
+func TestDataDirEnvFile(t *testing.T) {
+	t.Chdir(t.TempDir())
+	home := t.TempDir()
+	t.Setenv("RADARO_HOME", home)
+	if err := os.WriteFile(filepath.Join(home, ".env"), []byte("RADARO_LIMIT=7\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Unsetenv("RADARO_LIMIT") }) // godotenv sets it process-wide
+	c, err := Load()
+	if err != nil || c.PerSourceLimit != 7 {
+		t.Fatalf("data-dir .env not loaded: %+v %v", c, err)
+	}
+}
+
 func TestOverridesAndValidation(t *testing.T) {
 	t.Chdir(t.TempDir())
+	t.Setenv("RADARO_HOME", t.TempDir())
 	t.Setenv("RADARO_SOURCES", " HackerNews , reddit ,")
 	t.Setenv("RADARO_LIMIT", "")
 	c, err := Load()

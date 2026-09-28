@@ -391,3 +391,9 @@ func (s *Store) DraftedMentionIDs() (map[string]bool, error) {
 	}
 	return out, nil
 }
+
+// DraftCounts returns how many drafts are in each status.
+func (s *Store) DraftCounts() (map[string]int, error) {
+	out := map[string]int{}
+	return out, s.counts(out, `SELECT status, COUNT(*) FROM drafts GROUP BY status`)
+}

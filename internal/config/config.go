@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -15,6 +17,29 @@ import (
 	"github.com/verrloren/radaro/internal/llm"
 	"github.com/verrloren/radaro/internal/sources"
 )
+
+// DataDir is where Radaro keeps its database and optional .env, so every
+// working directory (and every agent) shares one state:
+// $RADARO_HOME, else $XDG_DATA_HOME/radaro or ~/.local/share/radaro on Linux,
+// ~/Library/Application Support/radaro on macOS, %LocalAppData%\radaro on Windows.
+func DataDir() string {
+	if dir := strings.TrimSpace(os.Getenv("RADARO_HOME")); dir != "" {
+		return dir
+	}
+	home, _ := os.UserHomeDir()
+	switch runtime.GOOS {
+	case "darwin":
+		return filepath.Join(home, "Library", "Application Support", "radaro")
+	case "windows":
+		if dir := os.Getenv("LocalAppData"); dir != "" {
+			return filepath.Join(dir, "radaro")
+		}
+	}
+	if dir := os.Getenv("XDG_DATA_HOME"); dir != "" {
+		return filepath.Join(dir, "radaro")
+	}
+	return filepath.Join(home, ".local", "share", "radaro")
+}
 
 // Config is the full runtime configuration.
 type Config struct {
@@ -48,12 +73,15 @@ type Config struct {
 
 // Load reads .env (without overriding the real environment) and validates.
 func Load() (*Config, error) {
-	_ = godotenv.Load() // a missing .env is fine
+	// A .env in the working directory wins, then the one in the data dir;
+	// neither overrides the real environment. Missing files are fine.
+	_ = godotenv.Load()
+	_ = godotenv.Load(filepath.Join(DataDir(), ".env"))
 	var errs []error
 	e := &envReader{errs: &errs}
 
 	c := &Config{
-		DBPath:            orDefault(e.str("RADARO_DB"), "radaro.db"),
+		DBPath:            orDefault(e.str("RADARO_DB"), filepath.Join(DataDir(), "radaro.db")),
 		Sources:           e.list("RADARO_SOURCES"),
 		PerSourceLimit:    e.int("RADARO_LIMIT", 50, 1),
 		SourceRetries:     e.int("RADARO_RETRIES", 2, 0),

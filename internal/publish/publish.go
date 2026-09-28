@@ -84,6 +84,9 @@ func (pl Platform) Validate(p Post) error {
 	if pl.Name == "reddit" && p.Kind == "post" && strings.TrimSpace(p.Community) == "" {
 		return errors.New("reddit posts need a subreddit (community)")
 	}
+	if pl.Name == "reddit" && len([]rune(p.Title)) > 300 {
+		return errors.New("reddit titles allow 300 characters")
+	}
 	if pl.MaxChars > 0 && len([]rune(body)) > pl.MaxChars {
 		return fmt.Errorf("%s allows %d characters, the body has %d", pl.Label, pl.MaxChars, len([]rune(body)))
 	}

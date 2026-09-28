@@ -1,0 +1,14 @@
+{
+  "name": "radaro",
+  "version": "0.1.0",
+  "description": "Find threads where your project is relevant, draft a tailored post or reply per community, approve each one, and publish to Reddit, Bluesky, Mastodon and Dev.to with the radaro CLI.",
+  "author": {
+    "name": "Radaro contributors",
+    "url": "https://github.com/verrloren/radaro"
+  },
+  "homepage": "https://github.com/verrloren/radaro",
+  "repository": "https://github.com/verrloren/radaro",
+  "license": "MIT",
+  "skills": ["./skills/radaro"],
+  "keywords": ["marketing", "social-listening", "reddit", "bluesky", "mastodon", "devto", "self-hosted", "cli"]
+}

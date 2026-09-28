@@ -24,6 +24,21 @@ radaro serve                        # open the dashboard
 
 Or build from source with `make build`, or run it in Docker with `docker compose up -d`.
 
+All state lives in one database in your data directory (`~/.local/share/radaro/radaro.db` on Linux, `~/Library/Application Support/radaro` on macOS, `%LocalAppData%\radaro` on Windows), so it is shared across working directories. Override the directory with `RADARO_HOME` or the database with `--db` / `RADARO_DB`. A `.env` there (or in the current directory) is loaded automatically. `radaro status` shows what is set up.
+
+## Use it from your coding agent
+
+Radaro ships an [Agent Skill](skills/radaro/SKILL.md) that teaches Claude Code, Codex and other skill-aware agents the whole loop: find threads where your project is relevant, write a tailored draft per community, **stop for your approval**, publish only what you approved, and report the results.
+
+```bash
+radaro skill install                 # into ~/.claude/skills and/or ~/.codex/skills (whichever exist)
+# or, in Claude Code:
+/plugin marketplace add verrloren/radaro
+/plugin install radaro@radaro
+```
+
+Then ask your agent something like *"promote my project https://github.com/me/thing with radaro"*. The skill forbids approving or publishing without your explicit "yes" per draft, and it never asks you to paste API keys into the chat: you connect accounts yourself with `radaro connect`.
+
 ## Commands
 
 | Command | What it does |
@@ -45,8 +60,10 @@ Or build from source with `make build`, or run it in Docker with `docker compose
 | `radaro publish <draft-id>` | Publish an approved draft |
 | `radaro stats` | Engagement of everything published |
 | `radaro activity` | Log of what was drafted, approved and published |
+| `radaro status` | Database path, configured sources, accounts, keywords, drafts |
+| `radaro skill install\|show` | Install the agent skill into Claude Code / Codex |
 
-Global flags: `--db <path>` (default `radaro.db` or `$RADARO_DB`) and `--json`.
+Global flags: `--db <path>` (default: `radaro.db` in the data directory, or `$RADARO_DB`) and `--json`.
 
 ## Sources
 
