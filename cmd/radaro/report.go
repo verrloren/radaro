@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/verrloren/radaro/internal/model"
+	"github.com/verrloren/radaro/internal/pipeline"
 	"github.com/verrloren/radaro/internal/sources"
 	"github.com/verrloren/radaro/internal/store"
 )
@@ -165,14 +166,18 @@ func (a *app) sourcesCmd() *cobra.Command {
 		Use:   "sources",
 		Short: "List available mention sources",
 		Args:  cobra.NoArgs,
-		RunE: func(*cobra.Command, []string) error {
+		RunE: a.withStore(func(st *store.Store, _ []string) error {
+			srcOpts, err := pipeline.SourceOptions(a.cfg, st)
+			if err != nil {
+				return err
+			}
 			type row struct {
 				sources.Info
 				Configured bool `json:"configured"`
 			}
 			var rows []row
 			for _, info := range sources.All() {
-				rows = append(rows, row{info, sources.Configured(info.Name, a.cfg.SourceOptions)})
+				rows = append(rows, row{info, sources.Configured(info.Name, srcOpts)})
 			}
 			if a.jsonFlag {
 				return printJSON(rows)
@@ -189,7 +194,7 @@ func (a *app) sourcesCmd() *cobra.Command {
 				fmt.Printf("%-15s %-16s %s\n", r.Name, r.Label, status)
 			}
 			return nil
-		},
+		}),
 	}
 }
 

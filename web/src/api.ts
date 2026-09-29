@@ -1,9 +1,13 @@
 import type {
+  Account,
+  AccountsResponse,
+  ConnectRequest,
   Meta,
   Mention,
   Project,
   Scope,
   Sentiment,
+  SourceSettings,
   SummaryResponse,
   TrackRequest,
   TrackResult,
@@ -32,7 +36,7 @@ function buildUrl(path: string, params?: Params): string {
 }
 
 async function request<T>(
-  method: "GET" | "POST" | "DELETE",
+  method: "GET" | "POST" | "PUT" | "DELETE",
   path: string,
   opts: { params?: Params; body?: unknown; signal?: AbortSignal } = {},
 ): Promise<T> {
@@ -119,6 +123,27 @@ export const api = {
     }),
 
   track: (body: TrackRequest) => request<TrackResult>("POST", "/api/track", { body }),
+
+  sourceSettings: (signal?: AbortSignal) =>
+    request<SourceSettings[]>("GET", "/api/settings/sources", { signal }),
+
+  /** A blank secret keeps the one saved before. */
+  saveSourceSettings: (name: string, values: Record<string, string>) =>
+    request<SourceSettings>("PUT", `/api/settings/sources/${encodeURIComponent(name)}`, { body: { values } }),
+
+  resetSourceSettings: (name: string) =>
+    request<SourceSettings>("DELETE", `/api/settings/sources/${encodeURIComponent(name)}`),
+
+  accounts: (signal?: AbortSignal) => request<AccountsResponse>("GET", "/api/accounts", { signal }),
+
+  connectAccount: (body: ConnectRequest) => request<Account>("POST", "/api/accounts", { body }),
+
+  deleteAccount: (id: number) => request<{ deleted: boolean }>("DELETE", `/api/accounts/${id}`),
+
+  redditAuthorize: (clientId: string, clientSecret: string) =>
+    request<{ authorize_url: string; redirect_uri: string }>("POST", "/api/accounts/reddit/authorize", {
+      body: { client_id: clientId, client_secret: clientSecret },
+    }),
 };
 
 export function errorMessage(e: unknown): string {

@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/verrloren/radaro/internal/config"
+	"github.com/verrloren/radaro/internal/pipeline"
 	"github.com/verrloren/radaro/internal/sources"
 	"github.com/verrloren/radaro/internal/store"
 	"github.com/verrloren/radaro/skills"
@@ -34,9 +35,13 @@ func (a *app) statusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			srcOpts, err := pipeline.SourceOptions(a.cfg, st)
+			if err != nil {
+				return err
+			}
 			var srcs []sourceStatus
 			for _, info := range sources.All() {
-				srcs = append(srcs, sourceStatus{info.Name, sources.Configured(info.Name, a.cfg.SourceOptions)})
+				srcs = append(srcs, sourceStatus{info.Name, sources.Configured(info.Name, srcOpts)})
 			}
 			status := map[string]any{
 				"version":         version,

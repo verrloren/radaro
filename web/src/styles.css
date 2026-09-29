@@ -155,6 +155,7 @@ code {
 /* ---------- form controls ---------- */
 
 input[type="text"],
+input[type="password"],
 select {
   height: 40px;
   min-width: 0;
@@ -167,7 +168,21 @@ select {
   transition: border-color 200ms var(--ease);
 }
 
+textarea {
+  min-width: 0;
+  border: 1px solid var(--line2);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--ink);
+  padding: 10px 12px;
+  font: 400 14px/1.45 var(--font-mono);
+  resize: vertical;
+  transition: border-color 200ms var(--ease);
+}
+
 input[type="text"]:hover,
+input[type="password"]:hover,
+textarea:hover,
 select:hover {
   border-color: var(--line3);
 }
@@ -187,6 +202,7 @@ select option {
 }
 
 input:disabled,
+textarea:disabled,
 select:disabled {
   opacity: 0.55;
   cursor: not-allowed;
@@ -1877,6 +1893,74 @@ fieldset:disabled .tile {
   min-width: 0;
 }
 
+.source-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.setup-col {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-width: 0;
+}
+
+.setup-form {
+  grid-column: 2 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--tint);
+  animation: rise 200ms var(--ease) both;
+}
+
+.setup-form .muted.small,
+.setup-steps {
+  margin: 0;
+}
+
+.setup-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 18px;
+  color: var(--ink2);
+}
+
+.code-chip {
+  font: 500 12.5px/1.4 var(--font-mono);
+  color: var(--ink);
+  background: var(--card);
+  border: 1px solid var(--line2);
+  border-radius: 6px;
+  padding: 1px 6px;
+  overflow-wrap: anywhere;
+}
+
+.account-line {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.link-btn.danger {
+  font-size: 13px;
+  color: var(--neg-ink);
+  text-decoration-color: var(--neg-ink);
+}
+
+.ok-line {
+  margin: 0;
+  color: var(--pos);
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
 .source-last {
   grid-column: 2 / -1;
   display: inline-flex;
@@ -2031,6 +2115,15 @@ fieldset:disabled .tile {
 }
 
 @media (max-width: 860px) {
+  .setup-form {
+    grid-column: 1 / -1;
+  }
+
+  .source-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
   .app {
     display: block;
   }

@@ -103,6 +103,30 @@ interface TrackResult {
   threshold_pending: number;
   threshold_events: string[];
 }
+
+// Settings for a source that needs keys. Secret values are never returned.
+interface SourceSettings {
+  name: string;
+  label: string;
+  configured: boolean;
+  saved: boolean;              // has values saved from the dashboard
+  fields: {
+    key: string;
+    label: string;
+    secret: boolean;
+    multiline?: boolean;
+    placeholder?: string;
+    env: string;               // the RADARO_* variable it overrides
+    set: boolean;
+    origin: "ui" | "env" | ""; // saved value wins over the environment
+    value?: string;            // non-secret fields only
+  }[];
+}
+
+interface Platform { name: string; label: string; replies: boolean; titles: boolean; max_chars: number; }
+
+// A connected publishing account; credentials are never returned.
+interface Account { id: number; platform: string; handle: string; created_at: string; updated_at: string; }
 ```
 
 ## Endpoints
@@ -122,5 +146,15 @@ interface TrackResult {
 | GET | `/api/summary` | `?q=` or `?p=` (mutually exclusive; neither = everything) | `{"summary": Summary, "timeseries": TimeseriesPoint[], "net": number, "themes": Theme[]}` |
 | GET | `/api/mentions` | `?q=` or `?p=`, `&source=`, `&sentiment=`, `&limit=` (1–1000, default 200) | `Mention[]`, newest first |
 | POST | `/api/track` | `{"query": string, "sources": string[], "mode": "incremental" \| "backfill", "pages": number, "project_id"?: number}` | `TrackResult` (may take several seconds) |
+| GET | `/api/settings/sources` | — | `SourceSettings[]` for every source that takes keys |
+| PUT | `/api/settings/sources/{name}` | `{"values": Record<string, string>}` | `SourceSettings`; a blank secret keeps the saved one, all blank removes the saved settings; `422` unknown field; `404` source without settings |
+| DELETE | `/api/settings/sources/{name}` | — | `SourceSettings` after falling back to the environment |
+| GET | `/api/accounts` | — | `{"platforms": Platform[], "accounts": Account[]}` |
+| POST | `/api/accounts` | `{"platform": "bluesky" \| "mastodon" \| "devto", "handle"?: string, "instance"?: string, "secret": string}` | `201 Account` once the platform accepts the key; `422` with the platform's refusal |
+| DELETE | `/api/accounts/{id}` | — | `{"deleted": true}`; drafts keep their text |
+| POST | `/api/accounts/reddit/authorize` | `{"client_id": string, "client_secret"?: string}` | `{"authorize_url": string, "redirect_uri": string}` — open `authorize_url`; the state is single use and expires in 10 minutes |
+| GET | `/oauth/reddit/callback` | Reddit's `?state=&code=` | `303` to `/?v=setup&connected=reddit`, or `&connect_error=<message>` |
 
 `net` is `(positive − negative) / total`, in `[-1, 1]`.
+
+Source keys saved through `/api/settings/sources` override the matching `RADARO_*` variables field by field and apply to the next scan without a restart. The Reddit redirect URI is the callback on the address the dashboard is open at (for example `http://127.0.0.1:8042/oauth/reddit/callback`); it must match the one registered in the Reddit app.

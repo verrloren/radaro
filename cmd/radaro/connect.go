@@ -28,7 +28,8 @@ func (a *app) connectCmd() *cobra.Command {
 		Use:   "connect",
 		Short: "Connect a publishing account (credentials are stored in the local database)",
 		Long: "Connect a publishing account. Secrets are read from a hidden prompt, or from stdin\n" +
-			"when it is not a terminal (e.g. `echo $TOKEN | radaro connect devto`).",
+			"when it is not a terminal (e.g. `echo $TOKEN | radaro connect devto`).\n" +
+			"The dashboard (radaro serve → Setup) connects accounts too.",
 	}
 
 	var bskyHandle, bskyService string
@@ -42,12 +43,7 @@ func (a *app) connectCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			creds := publish.BlueskyCredentials{Service: bskyService, Identifier: bskyHandle, AppPassword: pass}
-			session, err := (&publish.Bluesky{Creds: creds}).Login(cmd.Context())
-			if err != nil {
-				return err
-			}
-			return a.saveAccount("bluesky", session.Handle, creds)
+			return a.connect(cmd.Context(), "bluesky", publish.ConnectInput{Handle: bskyHandle, Service: bskyService, Secret: pass})
 		},
 	}
 	bsky.Flags().StringVar(&bskyHandle, "handle", "", "your handle or email")
@@ -61,13 +57,7 @@ func (a *app) connectCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			creds := publish.MastodonCredentials{Instance: publish.MastodonInstanceURL(mastoInstance), AccessToken: token}
-			acct, err := (&publish.Mastodon{Creds: creds}).VerifyCredentials(cmd.Context())
-			if err != nil {
-				return fmt.Errorf("mastodon rejected the token: %w", err)
-			}
-			host := strings.TrimPrefix(strings.TrimPrefix(creds.Instance, "https://"), "http://")
-			return a.saveAccount("mastodon", acct+"@"+host, creds)
+			return a.connect(cmd.Context(), "mastodon", publish.ConnectInput{Instance: mastoInstance, Secret: token})
 		},
 	}
 	masto.Flags().StringVar(&mastoInstance, "instance", "mastodon.social", "your instance")
@@ -79,12 +69,7 @@ func (a *app) connectCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			creds := publish.DevtoCredentials{APIKey: key}
-			user, err := (&publish.Devto{Creds: creds}).Me(cmd.Context())
-			if err != nil {
-				return fmt.Errorf("dev.to rejected the key: %w", err)
-			}
-			return a.saveAccount("devto", user, creds)
+			return a.connect(cmd.Context(), "devto", publish.ConnectInput{Secret: key})
 		},
 	}
 
@@ -126,6 +111,14 @@ func (a *app) connectCmd() *cobra.Command {
 	return cmd
 }
 
+func (a *app) connect(ctx context.Context, platform string, in publish.ConnectInput) error {
+	handle, creds, err := publish.Connect(ctx, platform, in)
+	if err != nil {
+		return err
+	}
+	return a.saveAccount(platform, handle, creds)
+}
+
 func (a *app) saveAccount(platform, handle string, creds any) error {
 	st, err := a.openStore()
 	if err != nil {
@@ -136,8 +129,6 @@ func (a *app) saveAccount(platform, handle string, creds any) error {
 	if err != nil {
 		return err
 	}
-	// The database now holds credentials: keep it private to this user.
-	_ = os.Chmod(st.Path(), 0o600)
 	_ = st.LogActivity("account.connected", 0, platform+" "+handle)
 	if a.jsonFlag {
 		return printJSON(acc)

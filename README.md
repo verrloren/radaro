@@ -52,7 +52,7 @@ radaro skill install                 # into ~/.claude/skills and/or ~/.codex/ski
 /plugin install radaro@radaro
 ```
 
-Then ask your agent something like *"promote my project https://github.com/me/thing with radaro"*. The skill forbids approving or publishing without your explicit "yes" per draft, and it never asks you to paste API keys into the chat: you connect accounts yourself with `radaro connect`.
+Then ask your agent something like *"promote my project https://github.com/me/thing with radaro"*. The skill forbids approving or publishing without your explicit "yes" per draft, and it never asks you to paste API keys into the chat: you connect accounts yourself in the dashboard (**Setup**) or with `radaro connect`.
 
 ## Commands
 
@@ -82,6 +82,8 @@ Global flags: `--db <path>` (default: `radaro.db` in the data directory, or `$RA
 
 ## Sources
 
+Set these up in the dashboard (`radaro serve` → **Setup** → **Sources**): keys are saved in the local database and apply to the next scan without a restart. The `RADARO_*` variables below still work as a fallback; a value saved in the dashboard wins.
+
 | Source | Needs |
 |---|---|
 | Hacker News | nothing (Algolia API) |
@@ -107,6 +109,8 @@ Delivery state lives in SQLite, so nothing is sent twice and failures are retrie
 ## Publishing
 
 Radaro talks to each platform's API directly. You connect your own accounts, and credentials stay in the local database, which is made readable only by you.
+
+The easiest way is the dashboard: `radaro serve` → **Setup** → **Publishing accounts** → **Connect**. Keys are checked with the platform before they are saved. For Reddit, create a "web app" at [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps) with the redirect URI the form shows (`http://127.0.0.1:8042/oauth/reddit/callback` by default), then approve access on Reddit. The CLI commands below do the same from a terminal.
 
 | Platform | Connect | Posts | Replies | Metrics |
 |---|---|---|---|---|

@@ -2,7 +2,7 @@
 
 ## Connecting accounts
 
-The user runs these in their own terminal. Radaro asks for the secret in a hidden prompt; never collect secrets in the chat.
+The user connects accounts themselves, never through the chat. The simplest way is the dashboard: `radaro serve`, then **Setup → Publishing accounts → Connect** (Reddit signs in through the browser from there too). Or they run these in their own terminal, where Radaro asks for the secret in a hidden prompt.
 
 | Platform | Command | What the user needs |
 |---|---|---|
@@ -11,7 +11,7 @@ The user runs these in their own terminal. Radaro asks for the secret in a hidde
 | Dev.to | `radaro connect devto` | An API key: Settings → Extensions → DEV Community API Keys |
 | Reddit | `radaro connect reddit --client-id <id>` | An app at reddit.com/prefs/apps ("web app" or "installed app") with redirect URI `http://127.0.0.1:8765/callback`; the command opens the browser to approve access |
 
-`radaro accounts --json` lists what is connected. `radaro sources --json` shows which scanning sources are configured. Scanning Reddit needs `RADARO_REDDIT_CLIENT_ID` and `RADARO_REDDIT_CLIENT_SECRET` in the environment or in the `.env` in Radaro's data directory, shown by `radaro status`.
+`radaro accounts --json` lists what is connected. `radaro sources --json` shows which scanning sources are configured. Keys for scanning sources (Reddit, Mastodon, RSS, X, YouTube) are set in the dashboard under **Setup → Sources**, or as `RADARO_*` variables in the environment or the `.env` in Radaro's data directory (shown by `radaro status`).
 
 ## What each platform accepts
 

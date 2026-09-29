@@ -16,6 +16,12 @@ import (
 
 func newServer(t *testing.T) (http.Handler, *store.Store) {
 	t.Helper()
+	srv, st := newTestServer(t, &config.Config{Sources: []string{"hackernews"}})
+	return srv.Handler(), st
+}
+
+func newTestServer(t *testing.T, cfg *config.Config) (*Server, *store.Store) {
+	t.Helper()
 	st, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -31,7 +37,7 @@ func newServer(t *testing.T) (http.Handler, *store.Store) {
 		"index.html":    {Data: []byte("<html>app</html>")},
 		"assets/app.js": {Data: []byte("console.log(1)")},
 	}
-	return New(&config.Config{Sources: []string{"hackernews"}}, st, "test", assets).Handler(), st
+	return New(cfg, st, "test", assets), st
 }
 
 func do(h http.Handler, method, path, body string, headers ...string) *httptest.ResponseRecorder {

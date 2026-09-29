@@ -18,7 +18,7 @@ func TestDefaults(t *testing.T) {
 	if c.DBPath != filepath.Join(home, "radaro.db") || strings.Join(c.Sources, ",") != "hackernews,bluesky" || c.PerSourceLimit != 50 {
 		t.Fatalf("defaults %+v", c)
 	}
-	if c.SourceOptions.MastodonInstance != "mastodon.social" || c.SMTPSecurity != "starttls" {
+	if c.SourceOptions.MastodonInstance != "" || c.SMTPSecurity != "starttls" {
 		t.Fatalf("defaults %+v", c)
 	}
 }

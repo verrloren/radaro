@@ -12,6 +12,7 @@ import { Themes } from "./components/Themes";
 import { MentionsFeed } from "./components/MentionsFeed";
 import { EmptyState } from "./components/EmptyState";
 import { SourcesCard } from "./components/SourcesCard";
+import { AccountsCard } from "./components/AccountsCard";
 import { ProjectsPanel } from "./components/ProjectsPanel";
 import { ErrorLine, Loading } from "./components/Status";
 
@@ -29,6 +30,19 @@ function readUrl(): Selection {
   const pRaw = sp.get("p");
   const pNum = pRaw ? Number.parseInt(pRaw, 10) : NaN;
   return { q, p: Number.isFinite(pNum) && pNum > 0 ? pNum : null, v: VIEWS.includes(sp.get("v") as View) ? (sp.get("v") as View) : "listen" };
+}
+
+// The Reddit sign-in comes back as ?v=setup&connected=reddit or &connect_error=…
+function takeConnectNotice(): { ok: boolean; text: string } | null {
+  const sp = new URLSearchParams(window.location.search);
+  const connected = sp.get("connected");
+  const failed = sp.get("connect_error");
+  if (!connected && !failed) return null;
+  sp.delete("connected");
+  sp.delete("connect_error");
+  const qs = sp.toString();
+  window.history.replaceState(null, "", `${window.location.pathname}${qs ? `?${qs}` : ""}${window.location.hash}`);
+  return failed ? { ok: false, text: failed } : { ok: true, text: `${connected === "reddit" ? "Reddit" : connected} account connected.` };
 }
 
 function writeUrl(sel: Selection) {
@@ -50,6 +64,7 @@ export default function App() {
   const [sel, setSel] = useState<Selection>(readUrl);
   const [rev, setRev] = useState(0);
   const refresh = useCallback(() => setRev((r) => r + 1), []);
+  const [notice] = useState(takeConnectNotice);
 
   useEffect(() => {
     const onPop = () => setSel(readUrl());
@@ -74,7 +89,9 @@ export default function App() {
   const [source, setSource] = useState<string | null>(null);
   useEffect(() => setSource(null), [scopeKey]);
 
-  const meta = useAsync((s) => api.meta(s), []);
+  const meta = useAsync((s) => api.meta(s), [rev]);
+  const settings = useAsync((s) => api.sourceSettings(s), [rev], sel.v === "setup");
+  const accounts = useAsync((s) => api.accounts(s), [rev], sel.v === "setup");
   const projects = useAsync((s) => api.projects(s), [rev]);
   const allQueries = useAsync((s) => api.queries(undefined, s), [rev]);
   const projectQueries = useAsync((s) => api.queries(sel.p ?? undefined, s), [sel.p, rev], sel.p !== null);
@@ -189,16 +206,19 @@ export default function App() {
             <header className="view-head">
               <p className="eyebrow">
                 <span className="eyebrow-mark" aria-hidden="true" />
-                Setup · Sources and projects
+                Setup · Sources, accounts and projects
               </p>
               <h1 className="headline">
                 {meta.data
                   ? `${meta.data.sources.length - needSetup} of ${meta.data.sources.length} sources are ready${needSetup ? ` — ${needSetup} need setup.` : "."}`
-                  : "Sources and projects"}
+                  : "Sources, accounts and projects"}
               </h1>
             </header>
             <div className="grid-setup">
-              <SourcesCard meta={meta} tracking={sel.q ? tracking : undefined} lookup={lookup} />
+              <div className="setup-col">
+                <SourcesCard meta={meta} settings={settings} tracking={sel.q ? tracking : undefined} lookup={lookup} onChanged={refresh} />
+                <AccountsCard accounts={accounts} lookup={lookup} notice={notice} onChanged={refresh} />
+              </div>
               <ProjectsPanel
                 projects={projects}
                 project={project}

@@ -82,6 +82,17 @@ type sourceOutcome struct {
 	err      error
 }
 
+// SourceOptions is the environment's source configuration with the settings
+// saved from the dashboard laid over it. It is read per scan, so changes made
+// in the dashboard apply without a restart.
+func SourceOptions(cfg *config.Config, st *store.Store) (sources.Options, error) {
+	stored, err := st.SourceSettings()
+	if err != nil {
+		return sources.Options{}, err
+	}
+	return cfg.SourceOptions.Merge(stored), nil
+}
+
 // Track scans query across the configured sources.
 func (p *Pipeline) Track(ctx context.Context, query string, opts Options) (*Result, error) {
 	query = strings.TrimSpace(query)
@@ -122,6 +133,10 @@ func (p *Pipeline) Track(ctx context.Context, query string, opts Options) (*Resu
 		return nil, err
 	}
 
+	srcOpts, err := SourceOptions(p.Config, p.Store)
+	if err != nil {
+		return nil, err
+	}
 	// Read cursor state up front, then fetch every source concurrently.
 	states := map[string]store.SourceState{}
 	for _, name := range names {
@@ -137,7 +152,7 @@ func (p *Pipeline) Track(ctx context.Context, query string, opts Options) (*Resu
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			outcomes[i] = p.fetchSource(ctx, query, name, states[name], opts)
+			outcomes[i] = p.fetchSource(ctx, query, name, states[name], srcOpts, opts)
 		}()
 	}
 	wg.Wait()
@@ -218,13 +233,13 @@ func (p *Pipeline) Track(ctx context.Context, query string, opts Options) (*Resu
 	return res, nil
 }
 
-func (p *Pipeline) fetchSource(ctx context.Context, query, name string, st store.SourceState, opts Options) sourceOutcome {
+func (p *Pipeline) fetchSource(ctx context.Context, query, name string, st store.SourceState, srcOpts sources.Options, opts Options) sourceOutcome {
 	out := sourceOutcome{name: name}
 	if opts.Backfill && st.BackfillComplete {
 		out.skipped = true
 		return out
 	}
-	src, err := p.NewSource(name, p.Config.SourceOptions)
+	src, err := p.NewSource(name, srcOpts)
 	if err != nil {
 		out.err = err
 		return out

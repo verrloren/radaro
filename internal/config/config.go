@@ -99,7 +99,7 @@ func Load() (*Config, error) {
 			RedditClientID:      e.str("RADARO_REDDIT_CLIENT_ID"),
 			RedditClientSecret:  e.str("RADARO_REDDIT_CLIENT_SECRET"),
 			RedditAccessToken:   e.str("RADARO_REDDIT_ACCESS_TOKEN"),
-			MastodonInstance:    orDefault(e.str("RADARO_MASTODON_INSTANCE"), "mastodon.social"),
+			MastodonInstance:    e.str("RADARO_MASTODON_INSTANCE"), // blank = mastodon.social
 			MastodonAccessToken: e.str("RADARO_MASTODON_ACCESS_TOKEN"),
 			RSSFeeds:            e.list("RADARO_RSS_FEEDS"),
 			XBearerToken:        e.str("RADARO_X_BEARER_TOKEN"),

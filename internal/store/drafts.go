@@ -32,6 +32,7 @@ func (s *Store) SaveAccount(platform, handle string, credentials any) (*Account,
 		platform, handle, string(creds), now, now); err != nil {
 		return nil, err
 	}
+	s.restrict()
 	var id int64
 	if err := s.db.QueryRow(`SELECT id FROM accounts WHERE platform = ? AND handle = ?`, platform, handle).Scan(&id); err != nil {
 		return nil, err

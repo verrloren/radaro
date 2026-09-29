@@ -117,7 +117,7 @@ export function Rail({ projects, keywords, keywordsLoading, keywordsError, sel, 
               Setup
               {needSetup > 0 && <span className="badge b-mari">{needSetup} need setup</span>}
             </span>
-            <span className="nav-sub">Sources and projects</span>
+            <span className="nav-sub">Sources, accounts, projects</span>
           </span>
         </button>
       </nav>

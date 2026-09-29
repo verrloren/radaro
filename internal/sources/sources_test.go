@@ -144,3 +144,33 @@ func TestRegistry(t *testing.T) {
 		t.Fatal("unknown source should error")
 	}
 }
+
+func TestMergeStoredSettings(t *testing.T) {
+	env := Options{RedditClientID: "env-id", RedditClientSecret: "env-secret", RSSFeeds: []string{"https://a/feed"}}
+	got := env.Merge(map[string]map[string]string{
+		"reddit":  {"client_id": "ui-id", "client_secret": " "},
+		"rss":     {"feeds": "https://b/feed\nhttps://c/feed, https://d/feed"},
+		"youtube": {"api_key": "yt", "unknown": "ignored"},
+		"bogus":   {"x": "y"},
+	})
+	if got.RedditClientID != "ui-id" || got.RedditClientSecret != "env-secret" {
+		t.Fatalf("reddit %+v", got)
+	}
+	if strings.Join(got.RSSFeeds, " ") != "https://b/feed https://c/feed https://d/feed" || got.YouTubeAPIKey != "yt" {
+		t.Fatalf("merged %+v", got)
+	}
+	if env.RedditClientID != "env-id" || len(env.RSSFeeds) != 1 {
+		t.Fatal("merge mutated the environment options")
+	}
+	if !Configured("youtube", got) || Configured("x", got) {
+		t.Fatal("configured after merge")
+	}
+	if got.Value("rss", "feeds") != "https://b/feed\nhttps://c/feed\nhttps://d/feed" {
+		t.Fatalf("value %q", got.Value("rss", "feeds"))
+	}
+	for _, info := range All() {
+		if info.NeedsConfig != (len(Fields(info.Name)) > 0) {
+			t.Fatalf("%s: needs_config and fields disagree", info.Name)
+		}
+	}
+}

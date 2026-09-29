@@ -126,3 +126,53 @@ export type Scope =
   | { kind: "all" }
   | { kind: "query"; q: string }
   | { kind: "project"; p: number };
+
+export interface SourceField {
+  key: string;
+  label: string;
+  secret: boolean;
+  multiline?: boolean;
+  placeholder?: string;
+  env: string;
+  set: boolean;
+  /** Where the value comes from: saved in Radaro, the environment, or unset. */
+  origin: "ui" | "env" | "";
+  /** Current value; never sent for secret fields. */
+  value?: string;
+}
+
+export interface SourceSettings {
+  name: string;
+  label: string;
+  configured: boolean;
+  saved: boolean;
+  fields: SourceField[];
+}
+
+export interface Platform {
+  name: string;
+  label: string;
+  replies: boolean;
+  titles: boolean;
+  max_chars: number;
+}
+
+export interface Account {
+  id: number;
+  platform: string;
+  handle: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AccountsResponse {
+  platforms: Platform[];
+  accounts: Account[];
+}
+
+export interface ConnectRequest {
+  platform: string;
+  handle?: string;
+  instance?: string;
+  secret: string;
+}

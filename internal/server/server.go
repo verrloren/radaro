@@ -19,6 +19,7 @@ import (
 	"github.com/verrloren/radaro/internal/config"
 	"github.com/verrloren/radaro/internal/model"
 	"github.com/verrloren/radaro/internal/pipeline"
+	"github.com/verrloren/radaro/internal/publish"
 	"github.com/verrloren/radaro/internal/sources"
 	"github.com/verrloren/radaro/internal/store"
 )
@@ -29,11 +30,20 @@ type Server struct {
 	store   *store.Store
 	version string
 	assets  fs.FS // built dashboard (web/dist)
+	oauth   oauthStates
+
+	// connect and redditExchange reach the platforms; tests replace them.
+	connect        func(ctx context.Context, platform string, in publish.ConnectInput) (string, any, error)
+	redditExchange func(ctx context.Context, r *publish.Reddit, code string) error
 }
 
 // New returns a server over an open store. assets may be nil (API only).
 func New(cfg *config.Config, st *store.Store, version string, assets fs.FS) *Server {
-	return &Server{cfg: cfg, store: st, version: version, assets: assets}
+	return &Server{
+		cfg: cfg, store: st, version: version, assets: assets,
+		connect:        publish.Connect,
+		redditExchange: func(ctx context.Context, r *publish.Reddit, code string) error { return r.ExchangeCode(ctx, code) },
+	}
 }
 
 // Handler builds the HTTP routes.
@@ -41,6 +51,7 @@ func (s *Server) Handler() http.Handler {
 	r := chi.NewRouter()
 	r.Use(securityHeaders, sameOrigin)
 	r.Get("/health", s.health)
+	r.Get(redditCallbackPath, s.redditCallback)
 	r.Route("/api", func(r chi.Router) {
 		r.Get("/meta", s.meta)
 		r.Get("/queries", s.queries)
@@ -54,6 +65,13 @@ func (s *Server) Handler() http.Handler {
 		r.Get("/summary", s.summary)
 		r.Get("/mentions", s.mentions)
 		r.Post("/track", s.track)
+		r.Get("/settings/sources", s.listSourceSettings)
+		r.Put("/settings/sources/{name}", s.saveSourceSettings)
+		r.Delete("/settings/sources/{name}", s.deleteSourceSettings)
+		r.Get("/accounts", s.accounts)
+		r.Post("/accounts", s.connectAccount)
+		r.Delete("/accounts/{id}", s.deleteAccount)
+		r.Post("/accounts/reddit/authorize", s.redditAuthorize)
 		r.NotFound(func(w http.ResponseWriter, _ *http.Request) { writeError(w, http.StatusNotFound, "not found") })
 	})
 	r.NotFound(s.spa)
@@ -74,9 +92,14 @@ type sourceInfo struct {
 }
 
 func (s *Server) meta(w http.ResponseWriter, _ *http.Request) {
+	opts, err := pipeline.SourceOptions(s.cfg, s.store)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
 	var list []sourceInfo
 	for _, info := range sources.All() {
-		list = append(list, sourceInfo{info, sources.Configured(info.Name, s.cfg.SourceOptions)})
+		list = append(list, sourceInfo{info, sources.Configured(info.Name, opts)})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version":         s.version,

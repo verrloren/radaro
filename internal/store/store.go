@@ -24,7 +24,7 @@ const DefaultProjectID int64 = 1
 // timeLayout is fixed-width UTC so stored timestamps sort lexically.
 const timeLayout = "2006-01-02T15:04:05.000000Z"
 
-const schemaVersion = 2
+const schemaVersion = 3
 
 const schema = `
 CREATE TABLE IF NOT EXISTS mentions (
@@ -152,6 +152,12 @@ CREATE TABLE IF NOT EXISTS activity (
     detail   TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_activity_at ON activity(at);
+
+CREATE TABLE IF NOT EXISTS source_settings (
+    source     TEXT PRIMARY KEY,
+    settings   TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 `
 
 // Store wraps one SQLite database.
