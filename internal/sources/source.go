@@ -42,6 +42,7 @@ type Options struct {
 	RedditClientID      string
 	RedditClientSecret  string
 	RedditAccessToken   string
+	RedditRefreshToken  string
 	MastodonInstance    string
 	MastodonAccessToken string
 	RSSFeeds            []string
@@ -68,10 +69,10 @@ var registry = []entry{
 	{Info{"hackernews", "Hacker News", "Y", "#ff6a3d", false}, always, func(Options) Source { return &HackerNews{} }},
 	{Info{"reddit", "Reddit", "r/", "#ff4f3f", true},
 		func(o Options) bool {
-			return o.RedditAccessToken != "" || (o.RedditClientID != "" && o.RedditClientSecret != "")
+			return o.RedditAccessToken != "" || (o.RedditClientID != "" && (o.RedditClientSecret != "" || o.RedditRefreshToken != ""))
 		},
 		func(o Options) Source {
-			return &Reddit{ClientID: o.RedditClientID, ClientSecret: o.RedditClientSecret, AccessToken: o.RedditAccessToken}
+			return &Reddit{ClientID: o.RedditClientID, ClientSecret: o.RedditClientSecret, RefreshToken: o.RedditRefreshToken, AccessToken: o.RedditAccessToken}
 		}},
 	{Info{"mastodon", "Mastodon", "@", "#7c7fff", true},
 		func(o Options) bool { return o.MastodonAccessToken != "" },

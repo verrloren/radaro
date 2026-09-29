@@ -14,16 +14,9 @@ type Field struct {
 	Env         string `json:"env"`
 }
 
+// Reddit and Mastodon have no fields: a connected account both scans and
+// posts, so they are set up once, as an account (see AccountBacked).
 var fields = map[string][]Field{
-	"reddit": {
-		{Key: "client_id", Label: "Client ID", Placeholder: "from reddit.com/prefs/apps", Env: "RADARO_REDDIT_CLIENT_ID"},
-		{Key: "client_secret", Label: "Client secret", Secret: true, Env: "RADARO_REDDIT_CLIENT_SECRET"},
-		{Key: "access_token", Label: "Access token (instead of an app)", Secret: true, Env: "RADARO_REDDIT_ACCESS_TOKEN"},
-	},
-	"mastodon": {
-		{Key: "instance", Label: "Instance", Placeholder: "mastodon.social", Env: "RADARO_MASTODON_INSTANCE"},
-		{Key: "access_token", Label: "Access token", Secret: true, Env: "RADARO_MASTODON_ACCESS_TOKEN"},
-	},
 	"rss": {
 		{Key: "feeds", Label: "Feed URLs, one per line", Multiline: true, Placeholder: "https://example.com/feed.xml", Env: "RADARO_RSS_FEEDS"},
 	},
@@ -35,22 +28,17 @@ var fields = map[string][]Field{
 	},
 }
 
-// Fields lists the settings source name accepts (nil for zero-config sources).
+// Fields lists the settings source name accepts (nil for zero-config and
+// account-backed sources).
 func Fields(name string) []Field { return fields[name] }
+
+// AccountBacked names the sources that scan with a connected publishing
+// account of the same name (its RADARO_* variables remain a fallback).
+var AccountBacked = map[string]bool{"reddit": true, "mastodon": true}
 
 // Value returns the current value of one setting ("" when unset).
 func (o Options) Value(source, key string) string {
 	switch source + "." + key {
-	case "reddit.client_id":
-		return o.RedditClientID
-	case "reddit.client_secret":
-		return o.RedditClientSecret
-	case "reddit.access_token":
-		return o.RedditAccessToken
-	case "mastodon.instance":
-		return o.MastodonInstance
-	case "mastodon.access_token":
-		return o.MastodonAccessToken
 	case "rss.feeds":
 		return strings.Join(o.RSSFeeds, "\n")
 	case "x.bearer_token":
@@ -63,16 +51,6 @@ func (o Options) Value(source, key string) string {
 
 func (o *Options) set(source, key, v string) {
 	switch source + "." + key {
-	case "reddit.client_id":
-		o.RedditClientID = v
-	case "reddit.client_secret":
-		o.RedditClientSecret = v
-	case "reddit.access_token":
-		o.RedditAccessToken = v
-	case "mastodon.instance":
-		o.MastodonInstance = v
-	case "mastodon.access_token":
-		o.MastodonAccessToken = v
 	case "rss.feeds":
 		o.RSSFeeds = SplitFeeds(v)
 	case "x.bearer_token":

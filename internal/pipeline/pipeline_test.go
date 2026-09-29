@@ -13,6 +13,7 @@ import (
 
 	"github.com/verrloren/radaro/internal/config"
 	"github.com/verrloren/radaro/internal/model"
+	"github.com/verrloren/radaro/internal/publish"
 	"github.com/verrloren/radaro/internal/sources"
 	"github.com/verrloren/radaro/internal/store"
 )
@@ -169,5 +170,32 @@ func TestRetryDelayHonorsRetryAfter(t *testing.T) {
 	}
 	if d := retryDelay(errors.New("x"), 1, 2); d != 4*time.Second {
 		t.Fatalf("backoff %v", d)
+	}
+}
+
+func TestSourceOptionsUseConnectedAccounts(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	cfg := &config.Config{SourceOptions: sources.Options{RedditAccessToken: "env-token", MastodonAccessToken: "env-masto"}}
+	o, err := SourceOptions(cfg, st)
+	if err != nil || o.RedditAccessToken != "env-token" || o.MastodonAccessToken != "env-masto" {
+		t.Fatalf("environment fallback %+v %v", o, err)
+	}
+	if _, err := st.SaveAccount("reddit", "me", publish.RedditCredentials{ClientID: "cid", ClientSecret: "sec", RefreshToken: "rt", Username: "me"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SaveAccount("mastodon", "me@hachyderm.io", publish.MastodonCredentials{Instance: "https://hachyderm.io", AccessToken: "acct-tok"}); err != nil {
+		t.Fatal(err)
+	}
+	o, err = SourceOptions(cfg, st)
+	if err != nil || o.RedditRefreshToken != "rt" || o.RedditClientID != "cid" || o.RedditAccessToken != "" ||
+		o.MastodonInstance != "https://hachyderm.io" || o.MastodonAccessToken != "acct-tok" {
+		t.Fatalf("account options %+v %v", o, err)
+	}
+	if !sources.Configured("reddit", o) || !sources.Configured("mastodon", o) {
+		t.Fatal("connected accounts should configure scanning")
 	}
 }

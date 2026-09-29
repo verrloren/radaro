@@ -82,15 +82,15 @@ Global flags: `--db <path>` (default: `radaro.db` in the data directory, or `$RA
 
 ## Sources
 
-Set these up in the dashboard (`radaro serve` → **Setup** → **Sources**): keys are saved in the local database and apply to the next scan without a restart. The `RADARO_*` variables below still work as a fallback; a value saved in the dashboard wins.
+Set these up in the dashboard (`radaro serve` → **Setup**): keys are saved in the local database and apply to the next scan without a restart. Reddit and Mastodon scan with your connected account (see [Publishing](#publishing)), so one connection covers both scanning and posting. The `RADARO_*` variables below still work as a fallback; the dashboard wins.
 
 | Source | Needs |
 |---|---|
 | Hacker News | nothing (Algolia API) |
 | Bluesky | nothing (public AppView; the anonymous API serves only the latest page, so no deep backfill) |
 | Stack Overflow | nothing (anonymous daily quota applies) |
-| Reddit | `RADARO_REDDIT_CLIENT_ID` + `RADARO_REDDIT_CLIENT_SECRET`, or `RADARO_REDDIT_ACCESS_TOKEN` |
-| Mastodon | `RADARO_MASTODON_ACCESS_TOKEN` (+ `RADARO_MASTODON_INSTANCE`) |
+| Reddit | a connected Reddit account, or `RADARO_REDDIT_CLIENT_ID` + `RADARO_REDDIT_CLIENT_SECRET`, or `RADARO_REDDIT_ACCESS_TOKEN` |
+| Mastodon | a connected Mastodon account, or `RADARO_MASTODON_ACCESS_TOKEN` (+ `RADARO_MASTODON_INSTANCE`) |
 | RSS / Atom | `RADARO_RSS_FEEDS` |
 | X | `RADARO_X_BEARER_TOKEN` (API v2 recent search) |
 | YouTube | `RADARO_YOUTUBE_API_KEY` |
@@ -110,7 +110,7 @@ Delivery state lives in SQLite, so nothing is sent twice and failures are retrie
 
 Radaro talks to each platform's API directly. You connect your own accounts, and credentials stay in the local database, which is made readable only by you.
 
-The easiest way is the dashboard: `radaro serve` → **Setup** → **Publishing accounts** → **Connect**. Keys are checked with the platform before they are saved. For Reddit, create a "web app" at [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps) with the redirect URI the form shows (`http://127.0.0.1:8042/oauth/reddit/callback` by default), then approve access on Reddit. The CLI commands below do the same from a terminal.
+The easiest way is the dashboard: `radaro serve` → **Setup** → **Connect account** next to the platform. A connected Reddit or Mastodon account is also used to scan that platform. Keys are checked with the platform before they are saved. For Reddit, create a "web app" at [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps) with the redirect URI the form shows (`http://127.0.0.1:8042/oauth/reddit/callback` by default), then approve access on Reddit. The CLI commands below do the same from a terminal.
 
 | Platform | Connect | Posts | Replies | Metrics |
 |---|---|---|---|---|

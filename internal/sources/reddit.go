@@ -22,7 +22,8 @@ var (
 // longer reliable, so it needs an app client or an existing bearer token.
 type Reddit struct {
 	ClientID     string
-	ClientSecret string
+	ClientSecret string // empty for an "installed app" with a refresh token
+	RefreshToken string // from a connected account; searches as that user
 	AccessToken  string // minted once and reused across backfill pages
 }
 
@@ -92,10 +93,13 @@ func (s *Reddit) FetchPage(ctx context.Context, query string, limit int, cursor 
 }
 
 func (s *Reddit) appToken(ctx context.Context) (string, error) {
-	if s.ClientID == "" || s.ClientSecret == "" {
-		return "", errors.New("reddit requires OAuth: set RADARO_REDDIT_CLIENT_ID and RADARO_REDDIT_CLIENT_SECRET, or RADARO_REDDIT_ACCESS_TOKEN")
-	}
 	form := url.Values{"grant_type": {"client_credentials"}}
+	switch {
+	case s.ClientID != "" && s.RefreshToken != "":
+		form = url.Values{"grant_type": {"refresh_token"}, "refresh_token": {s.RefreshToken}}
+	case s.ClientID == "" || s.ClientSecret == "":
+		return "", errors.New("reddit requires OAuth: connect a Reddit account in Setup, or set RADARO_REDDIT_CLIENT_ID and RADARO_REDDIT_CLIENT_SECRET")
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, redditTokenAPI, strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", err

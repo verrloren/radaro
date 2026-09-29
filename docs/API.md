@@ -146,7 +146,7 @@ interface Account { id: number; platform: string; handle: string; created_at: st
 | GET | `/api/summary` | `?q=` or `?p=` (mutually exclusive; neither = everything) | `{"summary": Summary, "timeseries": TimeseriesPoint[], "net": number, "themes": Theme[]}` |
 | GET | `/api/mentions` | `?q=` or `?p=`, `&source=`, `&sentiment=`, `&limit=` (1–1000, default 200) | `Mention[]`, newest first |
 | POST | `/api/track` | `{"query": string, "sources": string[], "mode": "incremental" \| "backfill", "pages": number, "project_id"?: number}` | `TrackResult` (may take several seconds) |
-| GET | `/api/settings/sources` | — | `SourceSettings[]` for every source that takes keys |
+| GET | `/api/settings/sources` | — | `SourceSettings[]` for the sources that take keys (RSS, X, YouTube); Reddit and Mastodon scan with a connected account instead |
 | PUT | `/api/settings/sources/{name}` | `{"values": Record<string, string>}` | `SourceSettings`; a blank secret keeps the saved one, all blank removes the saved settings; `422` unknown field; `404` source without settings |
 | DELETE | `/api/settings/sources/{name}` | — | `SourceSettings` after falling back to the environment |
 | GET | `/api/accounts` | — | `{"platforms": Platform[], "accounts": Account[]}` |

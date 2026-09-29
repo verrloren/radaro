@@ -1,10 +1,7 @@
 import { useId, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../api";
-import type { AsyncState } from "../hooks";
-import type { SourceLookup } from "../sources";
-import type { AccountsResponse, Platform } from "../types";
-import { SourceIcon } from "./SourceBadge";
-import { ErrorLine, Loading } from "./Status";
+import type { Platform, SourceSettings } from "../types";
+import { ErrorLine } from "./Status";
 
 interface FieldSpec {
   key: "handle" | "instance" | "secret";
@@ -35,108 +32,86 @@ const FORMS: Record<string, { help: string; fields: FieldSpec[] }> = {
   },
 };
 
-interface Props {
-  accounts: AsyncState<AccountsResponse>;
-  lookup: SourceLookup;
-  notice: { ok: boolean; text: string } | null;
-  onChanged: () => void;
-}
-
-export function AccountsCard({ accounts, lookup, notice, onChanged }: Props) {
-  const [open, setOpen] = useState<string | null>(null);
-  const [confirm, setConfirm] = useState<number | null>(null);
+/** Keys for a source that only listens (RSS, X, YouTube). */
+export function SourceForm({ source, onDone }: { source: SourceSettings; onDone: () => void }) {
+  const id = useId();
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    Object.fromEntries(source.fields.map((f) => [f.key, f.secret ? "" : (f.value ?? "")])),
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const platforms = accounts.data?.platforms ?? [];
-  const list = accounts.data?.accounts ?? [];
-  const icon = (name: string) => (name === "devto" ? { name, label: "Dev.to", glyph: "D", color: "#3b49df" } : lookup(name));
 
-  const disconnect = async (id: number) => {
+  const run = async (fn: () => Promise<unknown>) => {
     setBusy(true);
     setError(null);
     try {
-      await api.deleteAccount(id);
-      setConfirm(null);
-      onChanged();
+      await fn();
+      onDone();
     } catch (e) {
       setError(errorMessage(e));
-    } finally {
       setBusy(false);
     }
   };
 
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    void run(() => api.saveSourceSettings(source.name, values));
+  };
+
   return (
-    <section className="card pad" aria-labelledby="accounts-h">
-      <div className="card-head">
-        <h2 id="accounts-h" className="card-title lg">
-          Publishing accounts
-        </h2>
-        <span className="muted small">Where approved drafts are posted</span>
+    <form className="setup-form" onSubmit={submit} aria-label={`${source.label} settings`}>
+      {source.fields.map((f) => {
+        const fid = `${id}-${f.key}`;
+        const note = f.origin === "ui" ? "saved" : f.origin === "env" ? `from ${f.env}` : "";
+        const placeholder = f.secret && f.set ? "•••••••• — leave blank to keep" : f.placeholder;
+        return (
+          <div className="field" key={f.key}>
+            <label htmlFor={fid} className="small strong">
+              {f.label}
+              {note && <span className="muted"> · {note}</span>}
+            </label>
+            {f.multiline ? (
+              <textarea
+                id={fid}
+                rows={3}
+                value={values[f.key] ?? ""}
+                placeholder={placeholder}
+                onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
+                disabled={busy}
+                spellCheck={false}
+              />
+            ) : (
+              <input
+                id={fid}
+                type={f.secret ? "password" : "text"}
+                value={values[f.key] ?? ""}
+                placeholder={placeholder}
+                onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
+                disabled={busy}
+                autoComplete="off"
+                spellCheck={false}
+              />
+            )}
+          </div>
+        );
+      })}
+      <ErrorLine error={error} />
+      <div className="btn-row">
+        <button type="submit" className="btn primary sm" disabled={busy}>
+          Save
+        </button>
+        {source.saved && (
+          <button type="button" className="btn ghost danger sm" disabled={busy} onClick={() => void run(() => api.resetSourceSettings(source.name))}>
+            Remove saved keys
+          </button>
+        )}
       </div>
-      <p className="muted small">Credentials are checked with the platform, then stored in the local database. Nothing is posted without your approval.</p>
-      {notice && (notice.ok ? <p className="ok-line" role="status">✓ {notice.text}</p> : <ErrorLine error={notice.text} />)}
-      {accounts.loading && !accounts.data && <Loading label="Loading accounts" />}
-      <ErrorLine error={accounts.error ?? error} />
-      <ul className="source-list">
-        {platforms.map((p) => {
-          const connected = list.filter((a) => a.platform === p.name);
-          const isOpen = open === p.name;
-          return (
-            <li key={p.name} className={`source-row${connected.length ? "" : " is-off"}`}>
-              <SourceIcon source={icon(p.name)} size={28} />
-              <span className="source-text">
-                <span className="strong">{p.label}</span>
-                {connected.length === 0 ? (
-                  <span className="muted small">Not connected.</span>
-                ) : (
-                  connected.map((a) => (
-                    <span key={a.id} className="account-line small">
-                      <span>{a.handle}</span>
-                      {confirm === a.id ? (
-                        <>
-                          <button type="button" className="link-btn danger" disabled={busy} onClick={() => void disconnect(a.id)}>
-                            Disconnect {a.handle}?
-                          </button>
-                          <button type="button" className="link-btn quiet" disabled={busy} onClick={() => setConfirm(null)}>
-                            Keep
-                          </button>
-                        </>
-                      ) : (
-                        <button type="button" className="link-btn quiet" onClick={() => setConfirm(a.id)}>
-                          Disconnect
-                        </button>
-                      )}
-                    </span>
-                  ))
-                )}
-              </span>
-              <span className="source-actions">
-                {connected.length > 0 && <span className="badge b-ok">connected</span>}
-                <button type="button" className="btn sm" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : p.name)}>
-                  {isOpen ? "Close" : connected.length ? "Add account" : "Connect"}
-                </button>
-              </span>
-              {isOpen &&
-                (p.name === "reddit" ? (
-                  <RedditForm />
-                ) : (
-                  <ConnectForm
-                    platform={p}
-                    onDone={() => {
-                      setOpen(null);
-                      onChanged();
-                    }}
-                  />
-                ))}
-            </li>
-          );
-        })}
-      </ul>
-    </section>
+    </form>
   );
 }
 
-function ConnectForm({ platform, onDone }: { platform: Platform; onDone: () => void }) {
+/** Connects a Bluesky, Mastodon or Dev.to account; the key is checked with the platform. */
+export function ConnectForm({ platform, onDone }: { platform: Platform; onDone: () => void }) {
   const id = useId();
   const spec = FORMS[platform.name];
   const [values, setValues] = useState<Record<string, string>>({});
@@ -187,7 +162,8 @@ function ConnectForm({ platform, onDone }: { platform: Platform; onDone: () => v
   );
 }
 
-function RedditForm() {
+/** Starts the Reddit OAuth sign-in; Reddit sends the browser back to Setup. */
+export function RedditForm() {
   const id = useId();
   const redirect = `${window.location.origin}/oauth/reddit/callback`;
   const [clientId, setClientId] = useState("");

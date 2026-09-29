@@ -12,7 +12,6 @@ import { Themes } from "./components/Themes";
 import { MentionsFeed } from "./components/MentionsFeed";
 import { EmptyState } from "./components/EmptyState";
 import { SourcesCard } from "./components/SourcesCard";
-import { AccountsCard } from "./components/AccountsCard";
 import { ProjectsPanel } from "./components/ProjectsPanel";
 import { ErrorLine, Loading } from "./components/Status";
 
@@ -215,10 +214,15 @@ export default function App() {
               </h1>
             </header>
             <div className="grid-setup">
-              <div className="setup-col">
-                <SourcesCard meta={meta} settings={settings} tracking={sel.q ? tracking : undefined} lookup={lookup} onChanged={refresh} />
-                <AccountsCard accounts={accounts} lookup={lookup} notice={notice} onChanged={refresh} />
-              </div>
+              <SourcesCard
+                meta={meta}
+                settings={settings}
+                accounts={accounts}
+                notice={notice}
+                tracking={sel.q ? tracking : undefined}
+                lookup={lookup}
+                onChanged={refresh}
+              />
               <ProjectsPanel
                 projects={projects}
                 project={project}

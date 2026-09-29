@@ -20,6 +20,7 @@ import (
 	"github.com/verrloren/radaro/internal/config"
 	"github.com/verrloren/radaro/internal/llm"
 	"github.com/verrloren/radaro/internal/model"
+	"github.com/verrloren/radaro/internal/publish"
 	"github.com/verrloren/radaro/internal/sources"
 	"github.com/verrloren/radaro/internal/store"
 )
@@ -83,14 +84,37 @@ type sourceOutcome struct {
 }
 
 // SourceOptions is the environment's source configuration with the settings
-// saved from the dashboard laid over it. It is read per scan, so changes made
-// in the dashboard apply without a restart.
+// saved from the dashboard laid over it, and Reddit and Mastodon scanning with
+// the first connected account of that platform. It is read per scan, so
+// changes made in the dashboard apply without a restart.
 func SourceOptions(cfg *config.Config, st *store.Store) (sources.Options, error) {
 	stored, err := st.SourceSettings()
 	if err != nil {
 		return sources.Options{}, err
 	}
-	return cfg.SourceOptions.Merge(stored), nil
+	o := cfg.SourceOptions.Merge(stored)
+	accs, err := st.Accounts("")
+	if err != nil {
+		return sources.Options{}, err
+	}
+	var haveReddit, haveMastodon bool
+	for _, a := range accs {
+		switch {
+		case a.Platform == "reddit" && !haveReddit:
+			var c publish.RedditCredentials
+			if json.Unmarshal(a.Credentials, &c) == nil && c.ClientID != "" && c.RefreshToken != "" {
+				o.RedditClientID, o.RedditClientSecret, o.RedditRefreshToken, o.RedditAccessToken = c.ClientID, c.ClientSecret, c.RefreshToken, ""
+				haveReddit = true
+			}
+		case a.Platform == "mastodon" && !haveMastodon:
+			var c publish.MastodonCredentials
+			if json.Unmarshal(a.Credentials, &c) == nil && c.AccessToken != "" {
+				o.MastodonInstance, o.MastodonAccessToken = c.Instance, c.AccessToken
+				haveMastodon = true
+			}
+		}
+	}
+	return o, nil
 }
 
 // Track scans query across the configured sources.

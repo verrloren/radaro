@@ -38,7 +38,7 @@ func TestSourceSettings(t *testing.T) {
 
 	rec := do(h, "GET", "/api/settings/sources", "")
 	var all []sourceSettingsView
-	if err := json.Unmarshal(rec.Body.Bytes(), &all); err != nil || len(all) != 5 {
+	if err := json.Unmarshal(rec.Body.Bytes(), &all); err != nil || len(all) != 3 {
 		t.Fatalf("list %d %s", rec.Code, rec.Body)
 	}
 	if strings.Contains(rec.Body.String(), "env-yt-key") {
@@ -59,15 +59,12 @@ func TestSourceSettings(t *testing.T) {
 		t.Fatalf("meta does not see the saved key: %s", rec.Body)
 	}
 
-	// A blank secret keeps the saved one; non-secret fields come back.
-	rec = do(h, "PUT", "/api/settings/sources/mastodon", `{"values":{"instance":"fosstodon.org","access_token":"tok"}}`)
-	rec = do(h, "PUT", "/api/settings/sources/mastodon", `{"values":{"instance":"hachyderm.io","access_token":""}}`)
-	v = sourceView(t, rec.Body.Bytes())
-	if !v.Configured || field(v, "instance").Value != "hachyderm.io" || field(v, "access_token").Value != "" {
-		t.Fatalf("mastodon %s", rec.Body)
+	// A blank secret keeps the saved one.
+	rec = do(h, "PUT", "/api/settings/sources/x", `{"values":{"bearer_token":""}}`)
+	if v = sourceView(t, rec.Body.Bytes()); !v.Configured || field(v, "bearer_token").Value != "" {
+		t.Fatalf("blank secret %s", rec.Body)
 	}
-	opts, _ := srv.store.SourceSettings()
-	if opts["mastodon"]["access_token"] != "tok" {
+	if opts, _ := srv.store.SourceSettings(); opts["x"]["bearer_token"] != "ui-secret" {
 		t.Fatalf("secret not kept: %v", opts)
 	}
 
@@ -79,8 +76,10 @@ func TestSourceSettings(t *testing.T) {
 	if rec = do(h, "PUT", "/api/settings/sources/x", `{"values":{"nope":"1"}}`); rec.Code != 422 {
 		t.Fatalf("unknown field %d", rec.Code)
 	}
-	if rec = do(h, "PUT", "/api/settings/sources/hackernews", `{"values":{}}`); rec.Code != 404 {
-		t.Fatalf("zero-config source %d", rec.Code)
+	for _, name := range []string{"hackernews", "reddit", "mastodon"} {
+		if rec = do(h, "PUT", "/api/settings/sources/"+name, `{"values":{}}`); rec.Code != 404 {
+			t.Fatalf("%s has no settings form: %d", name, rec.Code)
+		}
 	}
 	if rec = do(h, "PUT", "/api/settings/sources/x", `{"values":{"bearer_token":"z"}}`, "Origin", "https://evil.example"); rec.Code != 403 {
 		t.Fatalf("cross-origin %d", rec.Code)

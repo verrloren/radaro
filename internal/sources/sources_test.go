@@ -146,31 +146,59 @@ func TestRegistry(t *testing.T) {
 }
 
 func TestMergeStoredSettings(t *testing.T) {
-	env := Options{RedditClientID: "env-id", RedditClientSecret: "env-secret", RSSFeeds: []string{"https://a/feed"}}
+	env := Options{XBearerToken: "env-x", RedditClientID: "env-id", RSSFeeds: []string{"https://a/feed"}}
 	got := env.Merge(map[string]map[string]string{
-		"reddit":  {"client_id": "ui-id", "client_secret": " "},
+		"x":       {"bearer_token": " "},
+		"reddit":  {"client_id": "account-backed, ignored"},
 		"rss":     {"feeds": "https://b/feed\nhttps://c/feed, https://d/feed"},
 		"youtube": {"api_key": "yt", "unknown": "ignored"},
 		"bogus":   {"x": "y"},
 	})
-	if got.RedditClientID != "ui-id" || got.RedditClientSecret != "env-secret" {
-		t.Fatalf("reddit %+v", got)
+	if got.XBearerToken != "env-x" || got.RedditClientID != "env-id" {
+		t.Fatalf("blank or account-backed values replaced the environment: %+v", got)
 	}
 	if strings.Join(got.RSSFeeds, " ") != "https://b/feed https://c/feed https://d/feed" || got.YouTubeAPIKey != "yt" {
 		t.Fatalf("merged %+v", got)
 	}
-	if env.RedditClientID != "env-id" || len(env.RSSFeeds) != 1 {
+	if len(env.RSSFeeds) != 1 {
 		t.Fatal("merge mutated the environment options")
 	}
-	if !Configured("youtube", got) || Configured("x", got) {
+	if !Configured("youtube", got) || Configured("reddit", got) {
 		t.Fatal("configured after merge")
 	}
 	if got.Value("rss", "feeds") != "https://b/feed\nhttps://c/feed\nhttps://d/feed" {
 		t.Fatalf("value %q", got.Value("rss", "feeds"))
 	}
 	for _, info := range All() {
-		if info.NeedsConfig != (len(Fields(info.Name)) > 0) {
-			t.Fatalf("%s: needs_config and fields disagree", info.Name)
+		if info.NeedsConfig != (len(Fields(info.Name)) > 0 || AccountBacked[info.Name]) {
+			t.Fatalf("%s: needs_config, fields and accounts disagree", info.Name)
 		}
+	}
+}
+
+func TestRedditRefreshTokenFromAccount(t *testing.T) {
+	serve(t, &redditTokenAPI, func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		// An installed app has no secret: basic auth is "id:".
+		if u, p, _ := r.BasicAuth(); u != "id" || p != "" || r.Form.Get("grant_type") != "refresh_token" || r.Form.Get("refresh_token") != "rt" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Write([]byte(`{"access_token":"user-tok"}`))
+	})
+	serve(t, &redditAPI, func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer user-tok" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Write([]byte(`{"data":{"children":[]}}`))
+	})
+	o := Options{RedditClientID: "id", RedditRefreshToken: "rt"}
+	if !Configured("reddit", o) {
+		t.Fatal("a connected account should configure the source")
+	}
+	src, _ := New("reddit", o)
+	if _, err := src.FetchPage(context.Background(), "q", 10, "", time.Time{}); err != nil {
+		t.Fatal(err)
 	}
 }
