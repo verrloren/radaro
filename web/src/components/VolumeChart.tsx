@@ -52,7 +52,7 @@ function buildBuckets(points: TimeseriesPoint[]): { buckets: Bucket[]; size: num
 function niceMax(v: number): number {
   if (v <= 0) return 1;
   const mag = 10 ** Math.floor(Math.log10(v));
-  for (const m of [1, 2, 2.5, 5, 10]) {
+  for (const m of [1, 2, 2.5, 3, 4, 5, 10]) {
     if (m * mag >= v) return m * mag;
   }
   return 10 * mag;
@@ -90,12 +90,12 @@ export function VolumeChart({ points }: { points: TimeseriesPoint[] }) {
   const hovered = hover !== null ? buckets[hover] : undefined;
 
   return (
-    <section className="panel chart-panel" aria-labelledby="vol-h">
-      <div className="panel-head">
-        <h2 className="panel-title" id="vol-h">
-          Volume &amp; sentiment
+    <section className="card pad chart-card" aria-labelledby="vol-h">
+      <div className="card-head">
+        <h2 className="card-title" id="vol-h">
+          Volume and sentiment{size > 1 ? "" : ", daily"}
         </h2>
-        <span className="muted mono small">
+        <span className="muted small">
           {range}
           {size > 1 && ` · ${size}-day bars`}
         </span>
@@ -158,7 +158,13 @@ export function VolumeChart({ points }: { points: TimeseriesPoint[] }) {
               </span>
             ))}
           </div>
-          <p className="readout mono small" aria-live="polite">
+          <div className="chart-foot">
+            <ul className="legend" aria-hidden="true">
+              <li><span className="key key-positive" />positive</li>
+              <li><span className="key key-neutral" />neutral</li>
+              <li><span className="key key-negative" />negative</li>
+            </ul>
+          <p className="readout small" aria-live="polite">
             {hovered ? (
               <>
                 <span>{periodLabel(hovered)}</span> · <strong>{fmtNum(hovered.total)}</strong>{" "}
@@ -170,6 +176,7 @@ export function VolumeChart({ points }: { points: TimeseriesPoint[] }) {
               <span className="muted">Hover a bar for details</span>
             )}
           </p>
+          </div>
           {/* Tables ignore width/overflow, so the visually-hidden wrapper must be a block. */}
           <div className="sr-only">
           <table>

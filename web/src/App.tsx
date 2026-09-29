@@ -3,36 +3,42 @@ import { api, ApiError } from "./api";
 import { useAsync } from "./hooks";
 import { makeSourceLookup } from "./sources";
 import type { Scope, TrackResult } from "./types";
-import { Header } from "./components/Header";
-import { ScanPanel } from "./components/ScanPanel";
-import { ProjectsPanel } from "./components/ProjectsPanel";
-import { Overview } from "./components/Overview";
+import { Rail, type View } from "./components/Rail";
+import { ScanCard } from "./components/ScanCard";
+import { Report } from "./components/Report";
+import { SentimentCard } from "./components/SentimentCard";
 import { VolumeChart } from "./components/VolumeChart";
-import { StatsRow } from "./components/StatsRow";
 import { Themes } from "./components/Themes";
 import { MentionsFeed } from "./components/MentionsFeed";
 import { EmptyState } from "./components/EmptyState";
+import { SourcesCard } from "./components/SourcesCard";
+import { ProjectsPanel } from "./components/ProjectsPanel";
 import { ErrorLine, Loading } from "./components/Status";
 
 export interface Selection {
   q: string | null;
   p: number | null;
+  v: View;
 }
+
+const VIEWS: readonly View[] = ["listen", "scan", "setup"];
 
 function readUrl(): Selection {
   const sp = new URLSearchParams(window.location.search);
   const q = sp.get("q")?.trim() || null;
   const pRaw = sp.get("p");
   const pNum = pRaw ? Number.parseInt(pRaw, 10) : NaN;
-  return { q, p: Number.isFinite(pNum) && pNum > 0 ? pNum : null };
+  return { q, p: Number.isFinite(pNum) && pNum > 0 ? pNum : null, v: VIEWS.includes(sp.get("v") as View) ? (sp.get("v") as View) : "listen" };
 }
 
 function writeUrl(sel: Selection) {
   const sp = new URLSearchParams(window.location.search);
   sp.delete("q");
   sp.delete("p");
+  sp.delete("v");
   if (sel.p !== null) sp.set("p", String(sel.p));
   if (sel.q) sp.set("q", sel.q);
+  if (sel.v !== "listen") sp.set("v", sel.v);
   const qs = sp.toString();
   const url = `${window.location.pathname}${qs ? `?${qs}` : ""}${window.location.hash}`;
   if (url !== `${window.location.pathname}${window.location.search}${window.location.hash}`) {
@@ -55,6 +61,7 @@ export default function App() {
     writeUrl(next);
     setSel(next);
   }, []);
+  const go = useCallback((v: View) => select({ ...sel, v }), [select, sel]);
 
   // A keyword narrows the view; otherwise the project; otherwise everything.
   const scope: Scope = useMemo(
@@ -62,6 +69,10 @@ export default function App() {
     [sel.q, sel.p],
   );
   const scopeKey = scope.kind === "query" ? `q:${scope.q}` : scope.kind === "project" ? `p:${scope.p}` : "all";
+
+  // The by-source rows and the feed share one source filter; a new scope clears it.
+  const [source, setSource] = useState<string | null>(null);
+  useEffect(() => setSource(null), [scopeKey]);
 
   const meta = useAsync((s) => api.meta(s), []);
   const projects = useAsync((s) => api.projects(s), [rev]);
@@ -87,98 +98,119 @@ export default function App() {
       : (project.data?.name ?? projects.data?.find((p) => p.id === sel.p)?.name ?? `Project #${sel.p}`);
 
   const keywordOptions = sel.p !== null ? projectQueries.data : allQueries.data;
-
   const noKeywords = allQueries.data !== undefined && allQueries.data.length === 0;
+  const needSetup = (meta.data?.sources ?? []).filter((s) => s.needs_config && !s.configured).length;
 
   const onScanned = useCallback(
     (res: TrackResult) => {
-      select({ p: sel.p, q: res.query });
+      select({ p: sel.p, q: res.query, v: "scan" });
       refresh();
     },
     [select, refresh, sel.p],
   );
 
-  const title = sel.q ?? projectName ?? "All keywords";
-  const subtitle = sel.q ? (projectName ? `keyword · ${projectName}` : "keyword") : sel.p !== null ? "project" : "every tracked keyword";
+  const subject = sel.q ?? projectName ?? "Your keywords";
+  const crumb = `${projectName ?? "All projects"} / ${sel.q ?? (sel.p !== null ? "Whole project" : "Every keyword")}`;
+  const empty = noKeywords && (summary.data?.summary.total ?? 0) === 0;
 
   return (
     <div className="app">
-      <Header
+      <Rail
         projects={projects}
         keywords={keywordOptions}
         keywordsLoading={sel.p !== null ? projectQueries.loading : allQueries.loading}
         keywordsError={sel.p !== null ? projectQueries.error : allQueries.error}
         sel={sel}
         onSelect={select}
+        view={sel.v}
+        onView={go}
+        total={summary.data?.summary.total}
+        needSetup={needSetup}
+        meta={meta}
       />
 
-      <main className="layout">
-        <aside className="side" aria-label="Controls">
-          <ScanPanel
-            meta={meta}
-            selectedQuery={sel.q}
-            tracking={tracking}
-            projectId={sel.p}
-            projectName={projectName}
-            lookup={lookup}
-            onScanned={onScanned}
-          />
-          <ProjectsPanel
-            projects={projects}
-            project={project}
-            selectedId={sel.p}
-            allQueries={allQueries.data ?? []}
-            onSelect={(p) => select({ p, q: null })}
-            onChanged={refresh}
-          />
-        </aside>
+      <main className="main">
+        <p className="crumb">{crumb}</p>
 
-        <section className="board" aria-label="Dashboard">
-          {noKeywords && (summary.data?.summary.total ?? 0) === 0 ? (
-            <EmptyState />
-          ) : (
-            <>
-              {summary.error && (
-                <div className="panel">
-                  <ErrorLine error={summary.error} onRetry={refresh} />
-                </div>
-              )}
-              {!summary.data && summary.loading && (
-                <div className="panel">
-                  <Loading label="Loading summary" />
-                </div>
-              )}
-              {summary.data && (
-                <>
-                  <div className="row-top">
-                    <Overview
-                      title={title}
-                      subtitle={subtitle}
-                      data={summary.data}
-                      loading={summary.loading}
-                    />
-                    <VolumeChart points={summary.data.timeseries} />
+        {sel.v === "listen" ? (
+          <section className="view" aria-label="Listen" key="listen">
+            {empty ? (
+              <EmptyState onScan={() => go("scan")} />
+            ) : (
+              <>
+                {summary.error && (
+                  <div className="card pad">
+                    <ErrorLine error={summary.error} onRetry={refresh} />
                   </div>
-                  <StatsRow data={summary.data} lookup={lookup} />
-                  <Themes themes={summary.data.themes} />
-                </>
-              )}
-              <MentionsFeed
-                key={scopeKey}
-                scope={scope}
-                rev={rev}
-                sourcesPresent={Object.keys(summary.data?.summary.by_source ?? {})}
-                lookup={lookup}
+                )}
+                {!summary.data && summary.loading && (
+                  <div className="card pad">
+                    <Loading label="Loading summary" />
+                  </div>
+                )}
+                {summary.data && (
+                  <>
+                    <Report subject={subject} data={summary.data} loading={summary.loading} />
+                    <div className="grid-3">
+                      <SentimentCard data={summary.data} lookup={lookup} source={source} onSource={setSource} />
+                      <VolumeChart points={summary.data.timeseries} />
+                      <Themes themes={summary.data.themes} />
+                    </div>
+                  </>
+                )}
+                <MentionsFeed
+                  key={scopeKey}
+                  scope={scope}
+                  rev={rev}
+                  summary={summary.data?.summary}
+                  lookup={lookup}
+                  source={source}
+                  onSource={setSource}
+                />
+              </>
+            )}
+          </section>
+        ) : sel.v === "scan" ? (
+          <section className="view" aria-label="Scan" key="scan">
+            <ScanCard
+              meta={meta}
+              selectedQuery={sel.q}
+              tracking={tracking}
+              projectId={sel.p}
+              projectName={projectName}
+              lookup={lookup}
+              onScanned={onScanned}
+              onSetup={() => go("setup")}
+              onListen={() => go("listen")}
+            />
+          </section>
+        ) : (
+          <section className="view" aria-label="Setup" key="setup">
+            <header className="view-head">
+              <p className="eyebrow">
+                <span className="eyebrow-mark" aria-hidden="true" />
+                Setup · Sources and projects
+              </p>
+              <h1 className="headline">
+                {meta.data
+                  ? `${meta.data.sources.length - needSetup} of ${meta.data.sources.length} sources are ready${needSetup ? ` — ${needSetup} need setup.` : "."}`
+                  : "Sources and projects"}
+              </h1>
+            </header>
+            <div className="grid-setup">
+              <SourcesCard meta={meta} tracking={sel.q ? tracking : undefined} lookup={lookup} />
+              <ProjectsPanel
+                projects={projects}
+                project={project}
+                selectedId={sel.p}
+                allQueries={allQueries.data ?? []}
+                onSelect={(p) => select({ p, q: null, v: sel.v })}
+                onChanged={refresh}
               />
-            </>
-          )}
-        </section>
+            </div>
+          </section>
+        )}
       </main>
-
-      <footer className="footer">
-        <span>Radaro keeps its database on your machine — no telemetry.</span>
-        <span className="mono">{meta.data ? `v${meta.data.version.replace(/^v/, "")}` : meta.error ? "version unavailable" : ""}</span>
-      </footer>
     </div>
   );
 }

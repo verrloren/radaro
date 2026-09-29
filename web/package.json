@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@radix-ui/react-select": "^2.3.7",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },

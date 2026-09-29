@@ -29,3 +29,14 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+--------------------------------------------------------------------------------
+Dashboard assets (web/src, embedded in the binary)
+
+- Bricolage Grotesque — Copyright 2022 The Bricolage Grotesque Project Authors.
+  Instrument Sans — Copyright 2022 The Instrument Sans Project Authors.
+  Both are licensed under the SIL Open Font License 1.1; the full license texts
+  are in web/src/fonts/.
+- Source icons are built from Simple Icons (https://simpleicons.org) paths,
+  released under CC0 1.0. The logos remain trademarks of their owners and are
+  used only to identify each platform.

@@ -4,6 +4,7 @@ import type { AsyncState } from "../hooks";
 import type { Project } from "../types";
 import { fmtNum } from "../format";
 import { ErrorLine, Loading } from "./Status";
+import { Select } from "./ui/Select";
 
 interface Props {
   projects: AsyncState<Project[]>;
@@ -59,8 +60,8 @@ export function ProjectsPanel({ projects, project, selectedId, allQueries, onSel
   const addable = allQueries.filter((q) => !inProject.has(q));
 
   return (
-    <section className="panel" aria-labelledby={`${id}-h`}>
-      <h2 className="panel-title" id={`${id}-h`}>
+    <section className="card pad" aria-labelledby={`${id}-h`}>
+      <h2 className="card-title lg" id={`${id}-h`}>
         Projects
       </h2>
 
@@ -85,8 +86,23 @@ export function ProjectsPanel({ projects, project, selectedId, allQueries, onSel
       <ErrorLine error={projects.error} />
       {projects.loading && !projects.data && <Loading label="Loading projects" />}
 
+      {(projects.data ?? []).length > 0 && (
+        <ul className="project-list" aria-label="Projects">
+          {(projects.data ?? []).map((p) => (
+            <li key={p.id}>
+              <button type="button" className={`project-item${p.id === selectedId ? " is-on" : ""}`} aria-pressed={p.id === selectedId} onClick={() => onSelect(p.id === selectedId ? null : p.id)}>
+                <span className="strong">{p.name}</span>
+                <span className="muted small">
+                  {fmtNum(p.query_count)} keyword{p.query_count === 1 ? "" : "s"} · {fmtNum(p.mention_count)} mentions
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
       {selectedId === null ? (
-        <p className="muted small">Select a project in the header to manage its keywords.</p>
+        <p className="muted small">Pick a project to manage its keywords.</p>
       ) : (
         <div className="project-detail">
           {project.loading && !current && <Loading label="Loading project" />}
@@ -95,8 +111,8 @@ export function ProjectsPanel({ projects, project, selectedId, allQueries, onSel
             <>
               <h3 className="sub-title">
                 {current.name}{" "}
-                <span className="muted mono">
-                  · {fmtNum(current.query_count)} kw · {fmtNum(current.mention_count)} mentions
+                <span className="muted small">
+                  · {fmtNum(current.query_count)} keyword{current.query_count === 1 ? "" : "s"} · {fmtNum(current.mention_count)} mentions
                 </span>
               </h3>
               {(current.queries ?? []).length === 0 ? (
@@ -105,7 +121,7 @@ export function ProjectsPanel({ projects, project, selectedId, allQueries, onSel
                 <ul className="kw-list">
                   {(current.queries ?? []).map((q) => (
                     <li key={q}>
-                      <span className="kw">{q}</span>
+                      <span>{q}</span>
                       <button
                         type="button"
                         className="icon-btn"
@@ -141,19 +157,14 @@ export function ProjectsPanel({ projects, project, selectedId, allQueries, onSel
                 <label className="sr-only" htmlFor={`${id}-add`}>
                   Add a tracked keyword to this project
                 </label>
-                <select
+                <Select
                   id={`${id}-add`}
+                  label="Add a tracked keyword to this project"
                   value={addQuery}
-                  onChange={(e) => setAddQuery(e.target.value)}
+                  onChange={setAddQuery}
                   disabled={busy || addable.length === 0}
-                >
-                  <option value="">{addable.length === 0 ? "No other keywords" : "Add keyword…"}</option>
-                  {addable.map((q) => (
-                    <option key={q} value={q}>
-                      {q}
-                    </option>
-                  ))}
-                </select>
+                  options={[{ value: "", label: addable.length === 0 ? "No other keywords" : "Add keyword…" }, ...addable.map((q) => ({ value: q, label: q }))]}
+                />
                 <button type="submit" className="btn" disabled={busy || !addQuery}>
                   Add
                 </button>
