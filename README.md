@@ -142,10 +142,6 @@ make build       # ./radaro
 npm --prefix web run dev   # dashboard dev server with /api proxied to 127.0.0.1:8042
 ```
 
-## Credits
-
-Radaro is an independent Go rewrite inspired by [Harken](https://github.com/VladUZH/harken) (MIT). Its source adapters, cursor-based scanning, lexicon sentiment analyzer and theme clustering are ported from Harken. See [NOTICE](NOTICE).
-
 ## License
 
 MIT, see [LICENSE](LICENSE).

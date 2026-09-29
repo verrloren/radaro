@@ -1,16 +1,13 @@
 Radaro
 Copyright (c) 2026 Radaro contributors
 
-Radaro is an independent Go rewrite inspired by Harken
-(https://github.com/VladUZH/harken). Its design (source adapters, cursor-based
-incremental/backfill scanning, the lexicon sentiment analyzer and its valence
-lexicon, term-frequency theme clustering, and the durable alert outbox) is
-ported from Harken, which is distributed under the following license:
+Third-party portions (source adapters, cursor-based incremental/backfill
+scanning, the lexicon sentiment analyzer and its valence lexicon,
+term-frequency theme clustering, and the durable alert outbox) are covered
+by the following license:
 
 --------------------------------------------------------------------------------
 MIT License
-
-Copyright (c) 2026 Harken contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

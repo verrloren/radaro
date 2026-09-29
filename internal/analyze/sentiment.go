@@ -10,8 +10,7 @@ import (
 	"github.com/verrloren/radaro/internal/model"
 )
 
-// The valence lexicon and idiom list are adapted from Harken
-// (github.com/VladUZH/harken, MIT). Values are signed valence in roughly [-3, 3].
+// Values are signed valence in roughly [-3, 3]. See NOTICE for license details.
 var lexicon = map[string]float64{
 	// strong positive
 	"amazing": 3, "awesome": 3, "excellent": 3, "fantastic": 3, "incredible": 3,

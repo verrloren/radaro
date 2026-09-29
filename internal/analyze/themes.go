@@ -10,7 +10,7 @@ import (
 )
 
 // Stopwords, including generic product/review and valence words that make poor
-// topic labels. Adapted from Harken (MIT) and extended.
+// topic labels. See NOTICE for license details.
 var stopwords = setOf(
 	"the", "a", "an", "and", "or", "but", "if", "then", "is", "are", "was", "were", "be",
 	"been", "being", "to", "of", "in", "on", "for", "with", "at", "by", "from", "as", "into",

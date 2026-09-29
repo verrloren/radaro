@@ -19,7 +19,7 @@ Design constraints, don't break them:
 - **One self-contained binary.** No runtime, no Docker, and no external service is required. The SQLite driver is pure Go (`modernc.org/sqlite`), so builds use `CGO_ENABLED=0`. The dashboard is embedded with `go:embed`.
 - **The binary has no built-in LLM agent.** The user's own coding agent does the thinking; Radaro provides data, state and platform access. Keep the CLI `--json`-friendly for agents.
 - **Humans approve every publish.** Only drafts in status `approved` can be published, and publish claims the draft (`publishing`) before any network call. Don't add shortcuts around this.
-- **MIT license.** Harken (MIT) is credited in `NOTICE`. Postiz is AGPL: never copy its code; platform connectors are written from the platforms' public API docs.
+- **MIT license.** Third-party license notices are retained in `NOTICE`. Postiz is AGPL: never copy its code; platform connectors are written from the platforms' public API docs.
 - **Local and private.** No telemetry. Credentials stay in the local database (chmod 600). The HTTP server binds to 127.0.0.1 by default and rejects cross-origin writes.
 
 ## Layout
