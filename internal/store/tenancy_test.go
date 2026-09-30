@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -93,7 +94,7 @@ func TestUsersAreIsolated(t *testing.T) {
 	if err := st.SaveTracking(b.ID, "other", []string{"hackernews"}, pa.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("B filed a keyword into A's project: %v", err)
 	}
-	if _, err := st.AddQueryToProject(b.ID, pa.ID, "secret-product"); !errors.Is(err, ErrNotFound) {
+	if _, err := st.AddQueryToProject(b.ID, pa.ID, "secret-product", nil); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("B added to A's project: %v", err)
 	}
 	// Mentions and keywords follow project ownership.
@@ -168,5 +169,73 @@ func TestDefaultProjectIsProtectedPerUser(t *testing.T) {
 	def, _ := st.DefaultProjectFor(u.ID)
 	if _, err := st.DeleteProject(u.ID, def); !errors.Is(err, ErrConflict) {
 		t.Fatalf("deleted the Default project: %v", err)
+	}
+}
+
+func TestKeywordsCRUD(t *testing.T) {
+	st := openTest(t)
+	u, _ := st.CreateUser("a@example.com", "h", true)
+	other, _ := st.CreateUser("b@example.com", "h", true)
+	p, _ := st.CreateProject(u.ID, "Launch")
+	n, err := st.AddKeywords(u.ID, p.ID, []string{"radaro", "  social   listening ", "Radaro"}, []string{"HackerNews", "reddit"})
+	if err != nil || n != 2 {
+		t.Fatalf("added %d, %v", n, err)
+	}
+	ks, err := st.Keywords(u.ID, p.ID)
+	if err != nil || len(ks) != 2 || ks[1].Query != "social listening" || len(ks[0].Sources) != 2 || ks[0].Sources[0] != "hackernews" {
+		t.Fatalf("keywords = %+v, %v", ks, err)
+	}
+	if _, err := st.Keywords(other.ID, p.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("other user listed keywords: %v", err)
+	}
+	if _, err := st.AddKeywords(other.ID, p.ID, []string{"x"}, nil); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("other user added keywords: %v", err)
+	}
+	if ok, _ := st.RemoveKeyword(other.ID, p.ID, ks[0].ID); ok {
+		t.Fatal("other user removed a keyword")
+	}
+	for _, bad := range []string{"", "   ", string(make([]rune, 201))} {
+		if _, err := st.AddKeywords(u.ID, p.ID, []string{bad}, nil); err == nil {
+			t.Fatalf("accepted keyword %q", bad)
+		}
+	}
+	if ok, err := st.RemoveKeyword(u.ID, p.ID, ks[0].ID); err != nil || !ok {
+		t.Fatalf("remove = %v, %v", ok, err)
+	}
+	if ks, _ := st.Keywords(u.ID, p.ID); len(ks) != 1 {
+		t.Fatalf("after remove %+v", ks)
+	}
+	if tr, _ := st.Tracking("radaro"); tr == nil {
+		t.Fatal("removing a keyword dropped its scan data")
+	}
+	if ok, _ := st.DeleteProject(u.ID, p.ID); !ok {
+		t.Fatal("delete failed")
+	}
+	if ok, _ := st.OwnsQuery(u.ID, "social listening"); ok {
+		t.Fatal("keywords of a deleted project are still owned")
+	}
+}
+
+func TestKeywordAndProjectLimits(t *testing.T) {
+	st := openTest(t)
+	u, _ := st.CreateUser("a@example.com", "h", true)
+	p, _ := st.CreateProject(u.ID, "Big")
+	many := make([]string, MaxKeywordsPerProject+1)
+	for i := range many {
+		many[i] = fmt.Sprintf("kw %d", i)
+	}
+	if _, err := st.AddKeywords(u.ID, p.ID, many, nil); !errors.Is(err, ErrConflict) {
+		t.Fatalf("over the keyword limit: %v", err)
+	}
+	if ks, _ := st.Keywords(u.ID, p.ID); len(ks) != 0 {
+		t.Fatal("a rejected batch was partly stored")
+	}
+	for i := 2; i < MaxProjectsPerUser; i++ { // Default and Big exist
+		if _, err := st.CreateProject(u.ID, fmt.Sprint("p", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := st.CreateProject(u.ID, "one too many"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("over the project limit: %v", err)
 	}
 }

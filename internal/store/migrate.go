@@ -22,6 +22,7 @@ var migrations = []migration{
 	{3, baseline},
 	{4, usersAndSessions},
 	{5, ownership},
+	{6, projectKeywords},
 }
 
 func baseline(tx *sql.Tx) error {
@@ -94,6 +95,24 @@ ALTER TABLE drafts ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CAS
 ALTER TABLE activity ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
 CREATE INDEX idx_drafts_user ON drafts(user_id, status, created_at);
 CREATE INDEX idx_activity_user ON activity(user_id, id);`)
+	return err
+}
+
+// projectKeywords gives each keyword of a project its own id, so the API can
+// address one. tracked_queries stays the shared list of what gets scanned.
+func projectKeywords(tx *sql.Tx) error {
+	_, err := tx.Exec(`
+CREATE TABLE project_keywords (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    query      TEXT NOT NULL REFERENCES tracked_queries(query) ON DELETE CASCADE,
+    added_at   TEXT NOT NULL,
+    UNIQUE (project_id, query)
+);
+INSERT INTO project_keywords (project_id, query, added_at)
+    SELECT project_id, query, added_at FROM project_queries ORDER BY added_at, query;
+DROP TABLE project_queries;
+CREATE INDEX idx_project_keywords_query ON project_keywords(query);`)
 	return err
 }
 

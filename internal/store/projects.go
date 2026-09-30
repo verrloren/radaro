@@ -48,7 +48,7 @@ func ownerValue(userID int64) any {
 const projectSelect = `SELECT p.id, p.name, p.is_default, p.created_at, p.updated_at,
 		COUNT(DISTINCT pq.query), COUNT(m.id)
 	FROM projects AS p
-	LEFT JOIN project_queries AS pq ON pq.project_id = p.id
+	LEFT JOIN project_keywords AS pq ON pq.project_id = p.id
 	LEFT JOIN mentions AS m ON m.query = pq.query`
 
 func scanProject(row interface{ Scan(...any) error }) (*Project, error) {
@@ -138,6 +138,15 @@ func (s *Store) CreateProject(userID int64, name string) (*Project, error) {
 	if err != nil {
 		return nil, err
 	}
+	if userID != 0 {
+		var n int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM projects WHERE user_id = ?`, userID).Scan(&n); err != nil {
+			return nil, err
+		}
+		if n >= MaxProjectsPerUser {
+			return nil, fmt.Errorf("%w: at most %d projects per user", ErrConflict, MaxProjectsPerUser)
+		}
+	}
 	var exists int
 	err = s.db.QueryRow(`SELECT 1 FROM projects WHERE user_id IS ? AND name = ?`, ownerValue(userID), name).Scan(&exists)
 	if err == nil {
@@ -195,44 +204,18 @@ func ownedProject(q querier, userID, projectID int64) (isDefault bool, err error
 	return isDefault, err
 }
 
-// AddQueryToProject groups an existing tracked keyword; false when already a member.
-func (s *Store) AddQueryToProject(userID, projectID int64, query string) (bool, error) {
-	query = strings.TrimSpace(query)
-	if query == "" {
-		return false, errors.New("query must not be empty")
-	}
-	if _, err := ownedProject(s.db, userID, projectID); err != nil {
-		return false, err
-	}
-	var one int
-	if err := s.db.QueryRow(`SELECT 1 FROM tracked_queries WHERE query = ?`, query).Scan(&one); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return false, fmt.Errorf("%w: unknown tracked keyword %q", ErrNotFound, query)
-		}
-		return false, err
-	}
-	now := stamp(time.Now())
-	res, err := s.db.Exec(`INSERT OR IGNORE INTO project_queries (project_id, query, added_at) VALUES (?, ?, ?)`, projectID, query, now)
-	if err != nil {
-		return false, err
-	}
-	n, _ := res.RowsAffected()
-	if n > 0 {
-		_, err = s.db.Exec(`UPDATE projects SET updated_at = ? WHERE id = ?`, now, projectID)
-	}
+// AddQueryToProject adds one keyword; false when it is already in the project.
+func (s *Store) AddQueryToProject(userID, projectID int64, query string, sources []string) (bool, error) {
+	n, err := s.AddKeywords(userID, projectID, []string{query}, sources)
 	return n > 0, err
 }
 
-// RemoveQueryFromProject removes only the grouping; keyword and mentions stay.
+// RemoveQueryFromProject removes a keyword by text; its mentions stay.
 func (s *Store) RemoveQueryFromProject(userID, projectID int64, query string) (bool, error) {
-	isDefault, err := ownedProject(s.db, userID, projectID)
-	if err != nil {
+	if _, err := ownedProject(s.db, userID, projectID); err != nil {
 		return false, err
 	}
-	if isDefault {
-		return false, fmt.Errorf("%w: keywords cannot be removed from the Default project", ErrConflict)
-	}
-	res, err := s.db.Exec(`DELETE FROM project_queries WHERE project_id = ? AND query = ?`, projectID, strings.TrimSpace(query))
+	res, err := s.db.Exec(`DELETE FROM project_keywords WHERE project_id = ? AND query = ?`, projectID, strings.TrimSpace(query))
 	if err != nil {
 		return false, err
 	}

@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -115,17 +116,56 @@ func TestProjectEndpoints(t *testing.T) {
 	if rec := do(h, "POST", "/api/projects", `{"name":"lang"}`); rec.Code != 409 {
 		t.Fatalf("duplicate %d", rec.Code)
 	}
-	if rec := do(h, "POST", "/api/projects/2/queries", `{"query":"go"}`); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"added":true`) {
+	if rec := do(h, "PATCH", "/api/projects/2", `{"name":"Languages"}`); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"Languages"`) {
+		t.Fatalf("rename %d %s", rec.Code, rec.Body)
+	}
+	rec := do(h, "POST", "/api/projects/2/keywords", `{"queries":["go","rust","Go"],"sources":["hackernews"]}`)
+	var res struct {
+		Added    int `json:"added"`
+		Keywords []struct {
+			ID      int64    `json:"id"`
+			Query   string   `json:"query"`
+			Sources []string `json:"sources"`
+		} `json:"keywords"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); rec.Code != 201 || err != nil || res.Added != 2 || len(res.Keywords) != 2 {
 		t.Fatalf("add %d %s", rec.Code, rec.Body)
+	}
+	if rec := do(h, "POST", "/api/projects/2/keywords", `{"query":"rust"}`); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"added":0`) {
+		t.Fatalf("re-add %d %s", rec.Code, rec.Body)
+	}
+	for body, code := range map[string]int{
+		`{}`:                                  422,
+		`{"query":"   "}`:                     422,
+		`{"query":"x","sources":["myspace"]}`: 422,
+	} {
+		if rec := do(h, "POST", "/api/projects/2/keywords", body); rec.Code != code {
+			t.Errorf("add %s → %d, want %d", body, rec.Code, code)
+		}
+	}
+	// A new keyword without sources gets the instance defaults.
+	rec = do(h, "POST", "/api/projects/2/keywords", `{"query":"zig"}`)
+	if !strings.Contains(rec.Body.String(), `"query":"zig","sources":["hackernews"]`) {
+		t.Fatalf("default sources: %s", rec.Body)
+	}
+	if rec := do(h, "GET", "/api/projects/2/keywords", ""); rec.Code != 200 || strings.Count(rec.Body.String(), `"query"`) != 3 {
+		t.Fatalf("list %d %s", rec.Code, rec.Body)
 	}
 	if rec := do(h, "DELETE", "/api/projects/1", ""); rec.Code != 409 {
 		t.Fatalf("delete default %d", rec.Code)
 	}
-	if rec := do(h, "DELETE", "/api/projects/2/queries", `{"query":"go"}`); rec.Code != 200 {
-		t.Fatalf("remove %d", rec.Code)
+	kid := res.Keywords[0].ID
+	if rec := do(h, "DELETE", fmt.Sprintf("/api/projects/2/keywords/%d", kid), ""); rec.Code != 200 {
+		t.Fatalf("remove %d %s", rec.Code, rec.Body)
+	}
+	if rec := do(h, "DELETE", fmt.Sprintf("/api/projects/2/keywords/%d", kid), ""); rec.Code != 404 {
+		t.Fatalf("remove twice %d", rec.Code)
 	}
 	if rec := do(h, "DELETE", "/api/projects/2", ""); rec.Code != 200 {
 		t.Fatalf("delete %d", rec.Code)
+	}
+	if rec := do(h, "GET", "/api/projects/2/keywords", ""); rec.Code != 404 {
+		t.Fatalf("keywords of a deleted project %d", rec.Code)
 	}
 }
 

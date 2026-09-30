@@ -25,7 +25,7 @@ func TestUsersCannotReachEachOthersData(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil || p.ID == 0 {
 		t.Fatalf("create %d %s", rec.Code, rec.Body)
 	}
-	if rec := do(a, "POST", fmt.Sprintf("/api/projects/%d/queries", p.ID), `{"query":"go"}`); rec.Code != 200 {
+	if rec := do(a, "POST", fmt.Sprintf("/api/projects/%d/keywords", p.ID), `{"query":"go"}`); rec.Code != 201 {
 		t.Fatalf("add %d %s", rec.Code, rec.Body)
 	}
 	rec = do(a, "POST", "/api/accounts", `{"platform":"devto","secret":"k1"}`)
@@ -38,8 +38,10 @@ func TestUsersCannotReachEachOthersData(t *testing.T) {
 	for _, c := range []struct{ method, path, body string }{
 		{"GET", "/api/projects/" + pid, ""},
 		{"DELETE", "/api/projects/" + pid, ""},
-		{"POST", "/api/projects/" + pid + "/queries", `{"query":"go"}`},
-		{"DELETE", "/api/projects/" + pid + "/queries", `{"query":"go"}`},
+		{"PATCH", "/api/projects/" + pid, `{"name":"mine"}`},
+		{"GET", "/api/projects/" + pid + "/keywords", ""},
+		{"POST", "/api/projects/" + pid + "/keywords", `{"query":"go"}`},
+		{"DELETE", "/api/projects/" + pid + "/keywords/1", ""},
 		{"GET", "/api/summary?p=" + pid, ""},
 		{"GET", "/api/mentions?p=" + pid, ""},
 		{"GET", "/api/queries?p=" + pid, ""},

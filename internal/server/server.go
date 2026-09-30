@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"net/url"
@@ -76,9 +77,11 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/projects", s.projects)
 			r.Post("/projects", s.createProject)
 			r.Get("/projects/{id}", s.project)
+			r.Patch("/projects/{id}", s.renameProject)
 			r.Delete("/projects/{id}", s.deleteProject)
-			r.Post("/projects/{id}/queries", s.addProjectQuery)
-			r.Delete("/projects/{id}/queries", s.removeProjectQuery)
+			r.Get("/projects/{id}/keywords", s.keywords)
+			r.Post("/projects/{id}/keywords", s.addKeywords)
+			r.Delete("/projects/{id}/keywords/{kid}", s.removeKeyword)
 			r.Get("/summary", s.summary)
 			r.Get("/mentions", s.mentions)
 			r.Post("/track", s.track)
@@ -204,6 +207,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		storeError(w, err, http.StatusUnprocessableEntity)
 		return
 	}
+	_ = s.store.LogActivity(userID(r), "project.created", 0, p.Name)
 	writeJSON(w, http.StatusCreated, p)
 }
 
@@ -221,59 +225,116 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "project not found")
 		return
 	}
+	_ = s.store.LogActivity(userID(r), "project.deleted", 0, fmt.Sprintf("project %d", id))
 	writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 }
 
-func (s *Server) addProjectQuery(w http.ResponseWriter, r *http.Request) {
+func (s *Server) renameProject(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
 		return
 	}
 	var body struct {
-		Query string `json:"query"`
+		Name string `json:"name"`
 	}
 	if !decode(w, r, &body) {
 		return
 	}
-	added, err := s.store.AddQueryToProject(userID(r), id, body.Query)
+	p, err := s.store.RenameProject(userID(r), id, body.Name)
 	if err != nil {
 		storeError(w, err, http.StatusUnprocessableEntity)
 		return
 	}
-	p, err := s.store.Project(userID(r), id)
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"added": added, "project": p})
+	writeJSON(w, http.StatusOK, p)
 }
 
-func (s *Server) removeProjectQuery(w http.ResponseWriter, r *http.Request) {
+func (s *Server) keywords(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	ks, err := s.store.Keywords(userID(r), id)
+	if err != nil {
+		storeError(w, err, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, ks)
+}
+
+// addKeywords adds one keyword or a batch. New keywords are registered for
+// scanning with the given sources, or the instance defaults.
+func (s *Server) addKeywords(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
 		return
 	}
 	var body struct {
-		Query string `json:"query"`
+		Query   string   `json:"query"`
+		Queries []string `json:"queries"`
+		Sources []string `json:"sources"`
 	}
 	if !decode(w, r, &body) {
 		return
 	}
-	removed, err := s.store.RemoveQueryFromProject(userID(r), id, body.Query)
+	queries := body.Queries
+	if body.Query != "" {
+		queries = append(queries, body.Query)
+	}
+	if len(queries) == 0 {
+		writeError(w, http.StatusUnprocessableEntity, "query or queries is required")
+		return
+	}
+	srcs := body.Sources
+	if len(srcs) == 0 {
+		srcs = s.cfg.Sources
+	}
+	for _, n := range srcs {
+		if _, ok := sources.Lookup(strings.ToLower(strings.TrimSpace(n))); !ok {
+			writeError(w, http.StatusUnprocessableEntity, "unknown source: "+n)
+			return
+		}
+	}
+	added, err := s.store.AddKeywords(userID(r), id, queries, srcs)
+	if err != nil {
+		storeError(w, err, http.StatusUnprocessableEntity)
+		return
+	}
+	if added > 0 {
+		_ = s.store.LogActivity(userID(r), "keyword.added", 0, fmt.Sprintf("%d keyword(s) to project %d", added, id))
+	}
+	ks, err := s.store.Keywords(userID(r), id)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	status := http.StatusOK
+	if added > 0 {
+		status = http.StatusCreated
+	}
+	writeJSON(w, status, map[string]any{"added": added, "keywords": ks})
+}
+
+func (s *Server) removeKeyword(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	kid, ok := parseID(chi.URLParam(r, "kid"))
+	if !ok {
+		writeError(w, http.StatusUnprocessableEntity, "invalid keyword id")
+		return
+	}
+	removed, err := s.store.RemoveKeyword(userID(r), id, kid)
 	if err != nil {
 		storeError(w, err, http.StatusInternalServerError)
 		return
 	}
 	if !removed {
-		writeError(w, http.StatusNotFound, "keyword is not in this project")
+		writeError(w, http.StatusNotFound, "keyword not found")
 		return
 	}
-	p, err := s.store.Project(userID(r), id)
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"removed": true, "project": p})
+	_ = s.store.LogActivity(userID(r), "keyword.removed", 0, fmt.Sprintf("keyword %d from project %d", kid, id))
+	writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 }
 
 func (s *Server) scope(w http.ResponseWriter, r *http.Request) (store.Scope, bool) {

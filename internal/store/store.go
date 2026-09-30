@@ -260,7 +260,7 @@ func (sc Scope) where(prefix string) (string, []any, error) {
 		conds, args = append(conds, "query = ?"), append(args, sc.Query)
 	}
 	if sc.ProjectID != 0 || sc.UserID != 0 {
-		sub := `SELECT pq.query FROM project_queries AS pq JOIN projects AS p ON p.id = pq.project_id WHERE 1=1`
+		sub := `SELECT pq.query FROM project_keywords AS pq JOIN projects AS p ON p.id = pq.project_id WHERE 1=1`
 		if sc.ProjectID != 0 {
 			sub, args = sub+" AND pq.project_id = ?", append(args, sc.ProjectID)
 		}
@@ -348,13 +348,7 @@ func (s *Store) SaveTracking(userID int64, query string, sources []string, proje
 	if query == "" {
 		return errors.New("query must not be empty")
 	}
-	var normalized []string
-	for _, src := range sources {
-		src = strings.ToLower(strings.TrimSpace(src))
-		if src != "" && !containsStr(normalized, src) {
-			normalized = append(normalized, src)
-		}
-	}
+	normalized := normalizeSources(sources)
 	if len(normalized) == 0 {
 		return errors.New("at least one source must be configured")
 	}
@@ -379,7 +373,7 @@ func (s *Store) SaveTracking(userID int64, query string, sources []string, proje
 	if target == 0 {
 		where, args := owner("p.user_id", userID)
 		var one int
-		err := tx.QueryRow(`SELECT 1 FROM project_queries AS pq JOIN projects AS p ON p.id = pq.project_id
+		err := tx.QueryRow(`SELECT 1 FROM project_keywords AS pq JOIN projects AS p ON p.id = pq.project_id
 			WHERE pq.query = ? AND `+where+` LIMIT 1`, append([]any{query}, args...)...).Scan(&one)
 		if errors.Is(err, sql.ErrNoRows) {
 			if target, err = defaultProject(tx, userID); err != nil {
@@ -390,7 +384,7 @@ func (s *Store) SaveTracking(userID int64, query string, sources []string, proje
 		}
 	}
 	if target != 0 {
-		if _, err := tx.Exec(`INSERT OR IGNORE INTO project_queries (project_id, query, added_at) VALUES (?, ?, ?)`,
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO project_keywords (project_id, query, added_at) VALUES (?, ?, ?)`,
 			target, query, now); err != nil {
 			return err
 		}
@@ -498,7 +492,7 @@ func (s *Store) Queries(userID, projectID int64) ([]string, error) {
 	q := `SELECT t.query FROM tracked_queries AS t LEFT JOIN mentions AS m ON m.query = t.query`
 	var args []any
 	if userID != 0 || projectID != 0 {
-		q += ` WHERE t.query IN (SELECT pq.query FROM project_queries AS pq JOIN projects AS p ON p.id = pq.project_id WHERE 1=1`
+		q += ` WHERE t.query IN (SELECT pq.query FROM project_keywords AS pq JOIN projects AS p ON p.id = pq.project_id WHERE 1=1`
 		if projectID != 0 {
 			q, args = q+` AND pq.project_id = ?`, append(args, projectID)
 		}
@@ -515,7 +509,7 @@ func (s *Store) Queries(userID, projectID int64) ([]string, error) {
 func (s *Store) OwnsQuery(userID int64, query string) (bool, error) {
 	where, args := owner("p.user_id", userID)
 	var one int
-	err := s.rdb.QueryRow(`SELECT 1 FROM project_queries AS pq JOIN projects AS p ON p.id = pq.project_id
+	err := s.rdb.QueryRow(`SELECT 1 FROM project_keywords AS pq JOIN projects AS p ON p.id = pq.project_id
 		WHERE pq.query = ? AND `+where+` LIMIT 1`, append([]any{query}, args...)...).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil

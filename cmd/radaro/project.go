@@ -52,7 +52,7 @@ func (a *app) projectCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				added, err := st.AddQueryToProject(0, id, args[1])
+				added, err := st.AddQueryToProject(0, id, args[1], a.cfg.Sources)
 				if err != nil {
 					return err
 				}

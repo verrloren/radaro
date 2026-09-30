@@ -101,6 +101,16 @@ interface Project {
   queries?: string[];         // only on single-project responses
 }
 
+interface Keyword {
+  id: number;
+  project_id: number;
+  query: string;
+  sources: string[];          // what a scan of this keyword covers
+  added_at: string;
+  last_scanned_at: string | null;
+  mention_count: number;
+}
+
 interface SourceState {
   source: string;
   newest_at: string | null;
@@ -197,10 +207,12 @@ does not exist.
 | GET | `/api/tracking` | `?q=<keyword>` | `Tracking` (404 if unknown) |
 | GET | `/api/projects` | — | the user's `Project[]`, Default first |
 | GET | `/api/projects/{id}` | — | `Project` with `queries` |
-| POST | `/api/projects` | `{"name": string}` | `201 Project`; `409` duplicate |
+| POST | `/api/projects` | `{"name": string}` | `201 Project`; `409` duplicate or beyond 100 projects |
 | DELETE | `/api/projects/{id}` | — | `{"deleted": true}`; `409` for the Default project |
-| POST | `/api/projects/{id}/queries` | `{"query": string}` | `{"added": boolean, "project": Project}` |
-| DELETE | `/api/projects/{id}/queries` | `{"query": string}` | `{"removed": true, "project": Project}` |
+| PATCH | `/api/projects/{id}` | `{"name": string}` | `Project`; `409` duplicate |
+| GET | `/api/projects/{id}/keywords` | — | `Keyword[]`, oldest first |
+| POST | `/api/projects/{id}/keywords` | `{"query"?: string, "queries"?: string[], "sources"?: string[]}` | `201` (`200` when nothing was new) `{"added": number, "keywords": Keyword[]}`. Keywords already in the project, in any letter case, are skipped. New keywords scan `sources`, default the instance's `RADARO_SOURCES`. `409` beyond 500 keywords per project |
+| DELETE | `/api/projects/{id}/keywords/{kid}` | — | `{"deleted": true}`; the keyword's mentions stay |
 | GET | `/api/summary` | `?q=` or `?p=` (mutually exclusive; neither = everything) | `{"summary": Summary, "timeseries": TimeseriesPoint[], "net": number, "themes": Theme[]}` |
 | GET | `/api/mentions` | `?q=` or `?p=`, `&source=`, `&sentiment=`, `&limit=` (1–1000, default 200) | `Mention[]`, newest first |
 | POST | `/api/track` | `{"query": string, "sources": string[], "mode": "incremental" \| "backfill", "pages": number, "project_id"?: number}` | `TrackResult` (may take several seconds) |
