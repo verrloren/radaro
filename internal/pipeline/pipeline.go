@@ -86,46 +86,73 @@ type sourceOutcome struct {
 
 // SourceOptions is the environment's source configuration with the settings
 // saved from the dashboard laid over it, and Reddit and Mastodon scanning with
-// the project's bound account, else the user's first connected account of
-// that platform (user 0: anyone's). It is read per scan, so changes made in
-// the dashboard apply without a restart.
+// the first live (or not yet checked), unpaused account of that platform: the
+// project's pool first, then the user's other accounts (user 0: anyone's). It
+// is read per scan, so changes made in the dashboard apply without a restart.
 func SourceOptions(cfg *config.Config, st *store.Store, userID, projectID int64) (sources.Options, error) {
 	stored, err := st.SourceSettings()
 	if err != nil {
 		return sources.Options{}, err
 	}
 	o := cfg.SourceOptions.Merge(stored)
-	accs, err := st.Accounts(userID, "")
+	accs, err := scanAccounts(st, userID, projectID)
 	if err != nil {
 		return sources.Options{}, err
 	}
-	if projectID != 0 {
-		bound, err := st.ProjectBindings(userID, projectID)
-		if err != nil {
-			return sources.Options{}, err
-		}
-		for i := len(bound) - 1; i >= 0; i-- {
-			accs = append([]*store.Account{bound[i].Account}, accs...)
-		}
-	}
 	var haveReddit, haveMastodon bool
 	for _, a := range accs {
-		switch {
-		case a.Platform == "reddit" && !haveReddit:
-			var c publish.RedditCredentials
-			if json.Unmarshal(a.Credentials, &c) == nil && c.ClientID != "" && c.RefreshToken != "" {
-				o.RedditClientID, o.RedditClientSecret, o.RedditRefreshToken, o.RedditAccessToken = c.ClientID, c.ClientSecret, c.RefreshToken, ""
-				haveReddit = true
-			}
-		case a.Platform == "mastodon" && !haveMastodon:
-			var c publish.MastodonCredentials
-			if json.Unmarshal(a.Credentials, &c) == nil && c.AccessToken != "" {
-				o.MastodonInstance, o.MastodonAccessToken = c.Instance, c.AccessToken
-				haveMastodon = true
-			}
+		if !scannable(a) {
+			continue
+		}
+		switch a.Platform {
+		case "reddit":
+			haveReddit = haveReddit || useRedditAccount(&o, a)
+		case "mastodon":
+			haveMastodon = haveMastodon || useMastodonAccount(&o, a)
 		}
 	}
 	return o, nil
+}
+
+// scanAccounts lists the accounts a scan may use, the project's pool first.
+func scanAccounts(st *store.Store, userID, projectID int64) ([]*store.Account, error) {
+	accs, err := st.Accounts(userID, "")
+	if err != nil || projectID == 0 {
+		return accs, err
+	}
+	bound, err := st.ProjectBindings(userID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	pool := make([]*store.Account, 0, len(bound)+len(accs))
+	for _, b := range bound {
+		pool = append(pool, b.Account)
+	}
+	return append(pool, accs...), nil
+}
+
+// scannable reports whether an account may be used to scan: one that may
+// work and that nobody paused.
+func scannable(a *store.Account) bool {
+	return !a.Paused && (a.Status == store.AccountLive || a.Status == store.AccountUnknown)
+}
+
+func useRedditAccount(o *sources.Options, a *store.Account) bool {
+	var c publish.RedditCredentials
+	if json.Unmarshal(a.Credentials, &c) != nil || c.ClientID == "" || c.RefreshToken == "" {
+		return false
+	}
+	o.RedditClientID, o.RedditClientSecret, o.RedditRefreshToken, o.RedditAccessToken = c.ClientID, c.ClientSecret, c.RefreshToken, ""
+	return true
+}
+
+func useMastodonAccount(o *sources.Options, a *store.Account) bool {
+	var c publish.MastodonCredentials
+	if json.Unmarshal(a.Credentials, &c) != nil || c.AccessToken == "" {
+		return false
+	}
+	o.MastodonInstance, o.MastodonAccessToken = c.Instance, c.AccessToken
+	return true
 }
 
 // Track scans query across the configured sources.
@@ -528,6 +555,25 @@ func Targets(cfg *config.Config) ([]alerts.Target, []string) {
 		}
 	}
 	return targets, problems
+}
+
+// AccountNotifier sends an account alert (an account went invalid or
+// suspended) through every configured transport, or returns nil when none is
+// configured.
+func AccountNotifier(cfg *config.Config) func(ctx context.Context, text string, payload map[string]any) error {
+	targets, _ := Targets(cfg)
+	if len(targets) == 0 {
+		return nil
+	}
+	return func(ctx context.Context, text string, payload map[string]any) error {
+		var errs []error
+		for _, t := range targets {
+			if err := t.SendThreshold(ctx, text, payload); err != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", t.Name(), err))
+			}
+		}
+		return errors.Join(errs...)
+	}
 }
 
 func (p *Pipeline) deliverAlerts(ctx context.Context, query string, newNegative []*model.Mention, res *Result, evaluate bool) error {

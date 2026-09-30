@@ -76,6 +76,10 @@ type Config struct {
 	RefreshTTL   time.Duration
 	Registration string // open | closed (the first user can always sign up)
 	CookieSecure bool   // force Secure cookies behind a proxy that hides HTTPS
+
+	// AccountCheckInterval is how often serve checks publishing accounts and
+	// refreshes published drafts' metrics; 0 disables it.
+	AccountCheckInterval time.Duration
 }
 
 // Load reads .env (without overriding the real environment) and validates.
@@ -131,6 +135,7 @@ func Load() (*Config, error) {
 		RefreshTTL:            e.duration("RADARO_REFRESH_TTL", 30*24*time.Hour, time.Hour),
 		Registration:          e.choice("RADARO_REGISTRATION", "closed", "open", "closed"),
 		CookieSecure:          e.choice("RADARO_COOKIE_SECURE", "false", "true", "false") == "true",
+		AccountCheckInterval:  e.optionalDuration("RADARO_ACCOUNT_CHECK_INTERVAL", 6*time.Hour, time.Minute),
 	}
 	if len(c.Sources) == 0 {
 		c.Sources = append([]string(nil), sources.DefaultSources...)
@@ -218,6 +223,15 @@ func (e *envReader) duration(name string, def, minimum time.Duration) time.Durat
 		*e.errs = append(*e.errs, fmt.Errorf("%s must be at least %s (got %s)", name, minimum, v))
 	}
 	return v
+}
+
+// optionalDuration is duration for something that can be switched off: a
+// zero duration ("0", "0s") disables it, and anything else must reach minimum.
+func (e *envReader) optionalDuration(name string, def, minimum time.Duration) time.Duration {
+	if v, err := time.ParseDuration(e.str(name)); err == nil && v == 0 {
+		return 0
+	}
+	return e.duration(name, def, minimum)
 }
 
 func (e *envReader) choice(name, def string, choices ...string) string {
