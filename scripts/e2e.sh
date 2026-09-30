@@ -52,6 +52,10 @@ expect 'removed "radaro"' "$bin" project remove 2 radaro
 expect "is now Launch week" "$bin" project rename 2 "Launch week"
 expect "radaro project bind 2 reddit" "$bin" project accounts 2
 
+step "no publishing accounts yet"
+expect "No accounts yet" "$bin" accounts
+[[ $("$bin" --json accounts) == "[]" ]] || fail "accounts --json is not an empty list"
+
 step "drafts stay behind approval"
 expect "draft 1 created" "$bin" draft add --project 2 --platform devto --title Hello --body "First post"
 out=$("$bin" publish 1 2>&1) && fail "an unapproved draft was published"

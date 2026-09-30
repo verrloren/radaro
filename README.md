@@ -10,7 +10,8 @@
 - **Local analysis.** Sentiment (lexicon with negation, intensifiers and contrast) and theme clustering run without any model. An LLM (Anthropic, OpenAI-compatible or local Ollama) is optional.
 - **Alerts.** Slack / generic webhook and SMTP email for new negative mentions, volume spikes and sentiment drops. Delivery is durable: failed alerts retry on the next scan.
 - **Publishing with a human in the loop.** Drafts must be approved before `radaro publish` sends them. Replies go into the original thread, and engagement metrics are read back.
-- **Projects and accounts per user.** Sign in with email and password (JWT sessions) in the dashboard or the CLI. A project holds any number of keywords and one account per platform, so two projects can post as two different Reddit accounts.
+- **Account health and limits.** Every account is checked in the background, has its own publishing limits, and can be paused; a draft without an account is published by the best one in the project's pool.
+- **Projects and accounts per user.** Sign in with email and password (JWT sessions) in the dashboard or the CLI. A project holds any number of keywords and a pool of accounts per platform, so two projects can post as different Reddit accounts.
 - **Agent-friendly CLI.** The CLI talks to the server as the signed-in user, and every read command supports `--json`, so a coding agent (Claude Code, Codex, …) can find opportunities and write drafts for you to approve.
 
 ## Install
@@ -82,16 +83,20 @@ Then ask your agent something like *"promote my project https://github.com/me/th
 | `radaro register`, `login`, `logout`, `whoami` | Create an account or sign in to a server (`--server`, `--email`, `--password-stdin`) |
 | `radaro project list\|create\|rename\|delete\|report` | Your projects |
 | `radaro project keywords\|add\|remove` | A project's keywords (`add` takes several) |
-| `radaro project accounts\|bind\|unbind` | Which account a project publishes and scans with on each platform |
+| `radaro project accounts\|bind\|unbind` | A project's pool of accounts per platform (`bind` adds one, `unbind` removes one or empties the pool) |
 | `radaro export [keyword]` | Full records as JSON or CSV (`-f csv -o file.csv`) |
 | `radaro sources` | Available sources and whether they are configured |
 | `radaro test-alert` | Send a synthetic alert (`--transport webhook\|email`, `--kind negative\|volume\|sentiment`) |
-| `radaro connect bluesky\|mastodon\|devto\|reddit` | Connect a publishing account (`--project` binds it to a project) |
-| `radaro accounts` | List connected accounts (`accounts remove <id>`) |
+| `radaro connect bluesky\|mastodon\|devto\|reddit` | Connect a publishing account (`--project` adds it to a project's pool) |
+| `radaro accounts` | Connected accounts with health, limits and quota (`--json` includes `quota.next_at`) |
+| `radaro accounts check [id]` | Check that accounts still work (credentials, suspension, rate limits) |
+| `radaro accounts pause\|resume <id>` | Stop or allow publishing from an account |
+| `radaro accounts limits <id>` | Show or set limits (`--daily 3 --interval 10m --cooldown 24h`; 0 = default) |
+| `radaro accounts remove <id>` | Forget an account and its credentials |
 | `radaro opportunities [keyword]` | Recent mentions that have no draft yet (`--days`, `--source`) |
-| `radaro draft add\|list\|show\|edit\|approve\|skip` | Write and review posts and replies |
-| `radaro publish <draft-id>` | Publish an approved draft |
-| `radaro stats` | Engagement of everything published |
+| `radaro draft add\|list\|show\|edit\|approve\|skip` | Write and review posts and replies (`show` says which account would publish and when) |
+| `radaro publish <draft-id>` | Publish an approved draft within its account's limits |
+| `radaro stats` | Engagement of everything published, and posts removed by the platform |
 | `radaro activity` | Log of what was drafted, approved and published |
 | `radaro status` | Server, user, configured sources, accounts, keywords, drafts |
 | `radaro skill install\|show` | Install the agent skill into Claude Code / Codex |
@@ -132,7 +137,7 @@ Delivery state lives in SQLite, so nothing is sent twice and failures are retrie
 
 Radaro talks to each platform's API directly. You connect your own accounts; credentials stay in the server's database (readable only by the server's user) and are never sent back to the browser or the CLI.
 
-The easiest way is the dashboard: **Setup** → **Connect account** next to the platform, or **Connect new** in a project's Accounts block to bind it to that project at once. Each project publishes with its own account per platform, and a project's Reddit or Mastodon account is also used to scan that platform. Keys are checked with the platform before they are saved. For Reddit, create a "web app" at [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps) with the redirect URI the form shows (`<your server>/oauth/reddit/callback`, e.g. `http://127.0.0.1:8042/oauth/reddit/callback`), then approve access on Reddit. The CLI commands below do the same from a terminal.
+The easiest way is the dashboard: **Setup** → **Connect account** next to the platform, or **Connect new** in a project's Accounts block to bind it to that project at once. Each project publishes with its own pool of accounts per platform, and a project's Reddit or Mastodon account is also used to scan that platform. Keys are checked with the platform before they are saved. For Reddit, create a "web app" at [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps) with the redirect URI the form shows (`<your server>/oauth/reddit/callback`, e.g. `http://127.0.0.1:8042/oauth/reddit/callback`), then approve access on Reddit. The CLI commands below do the same from a terminal.
 
 | Platform | Connect | Posts | Replies | Metrics |
 |---|---|---|---|---|
@@ -146,7 +151,7 @@ Secrets are read from a hidden prompt, or from stdin when piped (`echo "$TOKEN" 
 ```bash
 radaro project create "Launch"                 # → id 2
 radaro project add 2 "your-product" "your product alternative"
-radaro connect reddit --client-id <id> --project 2   # this project posts as this account
+radaro connect reddit --client-id <id> --project 2   # add this account to the project's pool
 radaro track "your-product" --sources hackernews,bluesky,reddit
 radaro opportunities --days 7                  # threads worth answering
 radaro draft add --platform reddit --project 2 --mention <id> --body-file reply.md   # reply in that thread
@@ -157,6 +162,22 @@ radaro stats
 ```
 
 Drafts go `draft → approved → publishing → published` (or `failed`, which you can approve again after fixing). A draft is claimed before the network call, so a crash cannot silently post it twice. Editing an approved draft sends it back to review. Follow each community's rules: automated self-promotion gets accounts banned.
+
+### Accounts, pools and limits
+
+A project pools any number of accounts per platform (`radaro project bind 2 reddit 5` adds account 5, `radaro project unbind 2 reddit 5` removes it, `radaro project unbind 2 reddit` empties the pool). Leave `--account` out of `draft add` and `radaro publish` picks one from the pool, or from all your accounts on the platform when the pool is empty: live or not yet checked, not paused, not rate-limited, within its limits, the one with the most quota left, then the least recently used. `radaro draft show <id>` says which account that would be and when. Every account has its own limits, checked when the server claims the draft, so two publishes never both pass one:
+
+| Platform | Per rolling 24 hours | Between publications | Per community |
+|---|---|---|---|
+| Reddit | 5 | 10 min | 24 h per subreddit |
+| Bluesky / Mastodon | 20 | 2 min | — |
+| Dev.to | 2 | 1 h | — |
+
+Change them with `radaro accounts limits <id> --daily 3 --interval 15m --cooldown 48h` (0 restores the default). Some rules are fixed: only one of your accounts takes part in a thread, the community cooldown also applies across your accounts on a platform, and a post removed from one account is never re-published from another.
+
+A refused publish sends nothing and says when the draft may go out; `radaro publish <id> --json` prints `{draft, account, error, next_at}` and exits with status 1. A platform rate limit puts the draft back in `approved` and marks the account `limited` until the time the platform gave. Rejected credentials (`invalid`) or a suspension (`suspended`) fail the draft, and auto-pick skips the account until you reconnect it. `radaro accounts --json` shows each account's `status`, `limits` and `quota` (`remaining`, `ready`, and `next_at`: when it may publish next).
+
+`radaro serve` checks every account and refreshes published posts every 6 hours (`RADARO_ACCOUNT_CHECK_INTERVAL`, `0` disables it); `radaro accounts check` does it on demand. An account turning `invalid` or `suspended` is alerted through the configured webhook, Slack or email. A post found removed by the platform or moderators is marked in `radaro stats` and its account is paused until you `radaro accounts resume <id>`.
 
 ## Running it on a server
 
