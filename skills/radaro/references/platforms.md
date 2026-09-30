@@ -2,16 +2,16 @@
 
 ## Connecting accounts
 
-The user connects accounts themselves, never through the chat. The simplest way is the dashboard: `radaro serve`, then **Setup → Connect account** next to the platform (Reddit signs in through the browser from there too). Or they run these in their own terminal, where Radaro asks for the secret in a hidden prompt.
+The user connects accounts themselves, never through the chat. The simplest way is the dashboard: a project's **Accounts** block → **Connect new** (or **Setup → Connect account**); Reddit signs in through the browser from there too. Or they run these in their own terminal, where Radaro asks for the secret in a hidden prompt. Add `--project <id>` so that project publishes with the new account.
 
 | Platform | Command | What the user needs |
 |---|---|---|
 | Bluesky | `radaro connect bluesky --handle you.bsky.social` | An app password: bsky.app → Settings → Privacy and security → App passwords |
 | Mastodon | `radaro connect mastodon --instance mastodon.social` | An access token: Preferences → Development → New application, scopes `read` and `write:statuses` |
 | Dev.to | `radaro connect devto` | An API key: Settings → Extensions → DEV Community API Keys |
-| Reddit | `radaro connect reddit --client-id <id>` | An app at reddit.com/prefs/apps ("web app" or "installed app") with redirect URI `http://127.0.0.1:8765/callback`; the command opens the browser to approve access |
+| Reddit | `radaro connect reddit --client-id <id>` | An app at reddit.com/prefs/apps ("web app" or "installed app") with the redirect URI the command prints (`<server>/oauth/reddit/callback`); the command opens the browser to approve access and waits |
 
-`radaro accounts --json` lists what is connected. `radaro sources --json` shows which scanning sources are configured. A connected Reddit or Mastodon account also scans that platform. Keys for the other scanning sources (RSS, X, YouTube) are set in the dashboard under **Setup**, or as `RADARO_*` variables in the environment or the `.env` in Radaro's data directory (shown by `radaro status`).
+`radaro accounts --json` lists the user's connected accounts; `radaro project accounts <id> --json` shows which one each project uses, and `radaro project bind <id> <platform> <account-id>` changes it. `radaro sources --json` shows which scanning sources are configured. A project's Reddit or Mastodon account also scans that platform. Keys for the other scanning sources (RSS, X, YouTube) apply to the whole server; the server's admin sets them in the dashboard under **Setup** or as `RADARO_*` variables.
 
 ## What each platform accepts
 
