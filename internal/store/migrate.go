@@ -20,6 +20,7 @@ type migration struct {
 var migrations = []migration{
 	// Versions 1–3 only ever added tables, so one idempotent step covers them.
 	{3, baseline},
+	{4, usersAndSessions},
 }
 
 func baseline(tx *sql.Tx) error {
@@ -29,6 +30,34 @@ func baseline(tx *sql.Tx) error {
 	now := stamp(time.Now())
 	_, err := tx.Exec(`INSERT OR IGNORE INTO projects (id, name, created_at, updated_at) VALUES (?, 'Default', ?, ?)`,
 		DefaultProjectID, now, now)
+	return err
+}
+
+func usersAndSessions(tx *sql.Tx) error {
+	_, err := tx.Exec(`
+CREATE TABLE users (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    email         TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    password_hash TEXT NOT NULL,
+    is_admin      INTEGER NOT NULL DEFAULT 0,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+CREATE TABLE refresh_tokens (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash  BLOB NOT NULL UNIQUE,
+    expires_at  TEXT NOT NULL,
+    revoked_at  TEXT,
+    replaced_by INTEGER,
+    created_at  TEXT NOT NULL,
+    user_agent  TEXT
+);
+CREATE INDEX idx_refresh_tokens_user ON refresh_tokens(user_id);
+CREATE TABLE instance (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);`)
 	return err
 }
 

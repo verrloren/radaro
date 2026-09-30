@@ -17,6 +17,8 @@ func withMigrations(t *testing.T, extra ...migration) {
 	t.Cleanup(func() { migrations = saved })
 }
 
+func latestVersion() int { return migrations[len(migrations)-1].version }
+
 func userVersion(t *testing.T, st *Store) int {
 	t.Helper()
 	var v int
@@ -32,8 +34,9 @@ func TestMigrationStepsRunOnceAndKeepData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v := userVersion(t, st); v != 3 {
-		t.Fatalf("fresh database version = %d, want 3", v)
+	latest := latestVersion()
+	if v := userVersion(t, st); v != latest {
+		t.Fatalf("fresh database version = %d, want %d", v, latest)
 	}
 	if _, err := st.CreateProject("Acme"); err != nil {
 		t.Fatal(err)
@@ -41,7 +44,7 @@ func TestMigrationStepsRunOnceAndKeepData(t *testing.T) {
 	st.Close()
 
 	runs := 0
-	withMigrations(t, migration{4, func(tx *sql.Tx) error {
+	withMigrations(t, migration{latest + 1, func(tx *sql.Tx) error {
 		runs++
 		_, err := tx.Exec(`ALTER TABLE projects ADD COLUMN note TEXT`)
 		return err
@@ -51,8 +54,8 @@ func TestMigrationStepsRunOnceAndKeepData(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if v := userVersion(t, st); v != 4 {
-			t.Fatalf("version = %d, want 4", v)
+		if v := userVersion(t, st); v != latest+1 {
+			t.Fatalf("version = %d, want %d", v, latest+1)
 		}
 		ps, err := st.Projects()
 		if err != nil || len(ps) != 2 {
@@ -72,7 +75,8 @@ func TestFailedMigrationRollsBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	st.Close()
-	withMigrations(t, migration{4, func(tx *sql.Tx) error {
+	latest := latestVersion()
+	withMigrations(t, migration{latest + 1, func(tx *sql.Tx) error {
 		if _, err := tx.Exec(`ALTER TABLE projects ADD COLUMN note TEXT`); err != nil {
 			return err
 		}
@@ -87,8 +91,8 @@ func TestFailedMigrationRollsBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if v := userVersion(t, st); v != 3 {
-		t.Fatalf("version = %d after a failed step, want 3", v)
+	if v := userVersion(t, st); v != latest {
+		t.Fatalf("version = %d after a failed step, want %d", v, latest)
 	}
 	if _, err := st.db.Exec(`SELECT note FROM projects`); err == nil {
 		t.Fatal("the failed step's column survived the rollback")
@@ -123,7 +127,7 @@ func TestRebuildTableKeepsRowsReferencesAndCounter(t *testing.T) {
 	st.Close()
 
 	// Add a CHECK constraint, which SQLite cannot ALTER in.
-	withMigrations(t, migration{4, func(tx *sql.Tx) error {
+	withMigrations(t, migration{latestVersion() + 1, func(tx *sql.Tx) error {
 		return rebuildTable(tx, "accounts", `
 			id          INTEGER PRIMARY KEY AUTOINCREMENT,
 			platform    TEXT NOT NULL,
@@ -168,7 +172,7 @@ func TestMigrationRejectsForeignKeyViolations(t *testing.T) {
 		t.Fatal(err)
 	}
 	st.Close()
-	withMigrations(t, migration{4, func(tx *sql.Tx) error {
+	withMigrations(t, migration{latestVersion() + 1, func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT INTO drafts (platform, account_id, kind, body, status, created_at, updated_at)
 			VALUES ('devto', 999, 'post', 'b', 'review', 'x', 'x')`)
 		return err
