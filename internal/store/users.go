@@ -260,3 +260,21 @@ func (s *Store) InstanceSecret(key string) ([]byte, error) {
 	}
 	return base64.StdEncoding.DecodeString(v)
 }
+
+// Users lists every user, oldest first.
+func (s *Store) Users() ([]User, error) {
+	rows, err := s.rdb.Query(`SELECT ` + userColumns + ` FROM users ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []User{}
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *u)
+	}
+	return out, rows.Err()
+}

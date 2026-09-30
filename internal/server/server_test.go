@@ -184,7 +184,7 @@ func TestCrossOriginRejected(t *testing.T) {
 func TestTrackValidation(t *testing.T) {
 	h, _ := newServer(t)
 	for _, body := range []string{`{"query":"","sources":["hackernews"]}`, `{"query":"x","sources":["nope"]}`,
-		`{"query":"x","sources":[]}`, `{"query":"x","sources":["hackernews"],"mode":"sideways"}`} {
+		`{"query":"x","sources":["hackernews"],"limit":500}`, `{"query":"x","sources":["hackernews"],"mode":"sideways"}`} {
 		if rec := do(h, "POST", "/api/track", body); rec.Code != 422 {
 			t.Fatalf("%s → %d", body, rec.Code)
 		}

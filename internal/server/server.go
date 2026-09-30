@@ -39,6 +39,7 @@ type Server struct {
 	// connect and redditExchange reach the platforms; tests replace them.
 	connect        func(ctx context.Context, platform string, in publish.ConnectInput) (string, any, error)
 	redditExchange func(ctx context.Context, r *publish.Reddit, code string) error
+	newPublisher   func(platform string, credentials json.RawMessage, version string) (publish.Publisher, error)
 }
 
 // New returns a server over an open store. assets may be nil (API only).
@@ -50,6 +51,7 @@ func New(cfg *config.Config, st *store.Store, version string, assets fs.FS) (*Se
 	return &Server{
 		cfg: cfg, store: st, version: version, assets: assets, auth: a, limiter: newLimiter(10, 10),
 		connect:        publish.Connect,
+		newPublisher:   publish.New,
 		redditExchange: func(ctx context.Context, r *publish.Reddit, code string) error { return r.ExchangeCode(ctx, code) },
 	}, nil
 }
@@ -88,6 +90,19 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/summary", s.summary)
 			r.Get("/mentions", s.mentions)
 			r.Post("/track", s.track)
+			r.Get("/report", s.report)
+			r.Get("/export", s.export)
+			r.Get("/opportunities", s.opportunities)
+			r.Get("/status", s.status)
+			r.Get("/activity", s.activity)
+			r.Get("/drafts", s.drafts)
+			r.Post("/drafts", s.createDraft)
+			r.Get("/drafts/{id}", s.draft)
+			r.Patch("/drafts/{id}", s.editDraft)
+			r.Post("/drafts/{id}/approve", s.approveDraft)
+			r.Post("/drafts/{id}/skip", s.skipDraft)
+			r.Post("/drafts/{id}/publish", s.publishDraft)
+			r.Get("/stats", s.stats)
 			r.Get("/settings/sources", s.listSourceSettings)
 			r.With(s.requireAdmin).Put("/settings/sources/{name}", s.saveSourceSettings)
 			r.With(s.requireAdmin).Delete("/settings/sources/{name}", s.deleteSourceSettings)
@@ -446,6 +461,7 @@ func (s *Server) track(w http.ResponseWriter, r *http.Request) {
 		Sources   []string `json:"sources"`
 		Mode      string   `json:"mode"`
 		Pages     int      `json:"pages"`
+		Limit     int      `json:"limit"`
 		ProjectID *int64   `json:"project_id"`
 	}
 	if !decode(w, r, &body) {
@@ -468,8 +484,22 @@ func (s *Server) track(w http.ResponseWriter, r *http.Request) {
 		}
 		names = append(names, n)
 	}
+	if len(body.Sources) == 0 {
+		// Rescan with what the keyword was tracked with, else the defaults.
+		names = s.cfg.Sources
+		if t, err := s.store.Tracking(query); err != nil {
+			internalError(w, err)
+			return
+		} else if t != nil && len(t.Sources) > 0 {
+			names = t.Sources
+		}
+	}
 	if len(names) == 0 {
 		writeError(w, http.StatusUnprocessableEntity, "select at least one source")
+		return
+	}
+	if body.Limit != 0 && (body.Limit < 1 || body.Limit > 100) {
+		writeError(w, http.StatusUnprocessableEntity, "limit must be between 1 and 100")
 		return
 	}
 	if body.Mode == "" {
@@ -495,6 +525,9 @@ func (s *Server) track(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := *s.cfg
 	cfg.Sources = names
+	if body.Limit != 0 {
+		cfg.PerSourceLimit = body.Limit
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 	res, err := pipeline.New(&cfg, s.store).Track(ctx, query, pipeline.Options{

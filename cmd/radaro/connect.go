@@ -2,12 +2,8 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
@@ -18,18 +14,20 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/verrloren/radaro/internal/publish"
+	"github.com/verrloren/radaro/internal/client"
 	"github.com/verrloren/radaro/internal/store"
 )
 
 func (a *app) connectCmd() *cobra.Command {
+	var project int64
 	cmd := &cobra.Command{
 		Use:   "connect",
-		Short: "Connect a publishing account (credentials are stored in the local database)",
+		Short: "Connect a publishing account (stored on the server, readable only by you)",
 		Long: "Connect a publishing account. Secrets are read from a hidden prompt, or from stdin\n" +
 			"when it is not a terminal (e.g. `echo $TOKEN | radaro connect devto`).\n" +
-			"The dashboard (radaro serve → Setup) connects accounts too.",
+			"With --project the account is also bound to that project. The dashboard connects accounts too.",
 	}
+	cmd.PersistentFlags().Int64Var(&project, "project", 0, "also make this project publish with the account")
 
 	var bskyHandle, bskyService string
 	bsky := &cobra.Command{
@@ -42,7 +40,7 @@ func (a *app) connectCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return a.connect(cmd.Context(), "bluesky", publish.ConnectInput{Handle: bskyHandle, Service: bskyService, Secret: pass})
+			return a.connect(cmd.Context(), map[string]any{"platform": "bluesky", "handle": bskyHandle, "service": bskyService, "secret": pass}, project)
 		},
 	}
 	bsky.Flags().StringVar(&bskyHandle, "handle", "", "your handle or email")
@@ -56,7 +54,7 @@ func (a *app) connectCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return a.connect(cmd.Context(), "mastodon", publish.ConnectInput{Instance: mastoInstance, Secret: token})
+			return a.connect(cmd.Context(), map[string]any{"platform": "mastodon", "instance": mastoInstance, "secret": token}, project)
 		},
 	}
 	masto.Flags().StringVar(&mastoInstance, "instance", "mastodon.social", "your instance")
@@ -68,17 +66,16 @@ func (a *app) connectCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return a.connect(cmd.Context(), "devto", publish.ConnectInput{Secret: key})
+			return a.connect(cmd.Context(), map[string]any{"platform": "devto", "secret": key}, project)
 		},
 	}
 
 	var clientID string
-	var port int
 	reddit := &cobra.Command{
 		Use:   "reddit",
 		Short: "Connect Reddit through your own Reddit app and a browser sign-in",
 		Long: "Create an app at https://www.reddit.com/prefs/apps (type \"web app\" or \"installed app\")\n" +
-			"with redirect URI http://127.0.0.1:8765/callback, then run\n" +
+			"with the redirect URI <server>/oauth/reddit/callback (this command prints it), then run\n" +
 			"  radaro connect reddit --client-id <id>\n" +
 			"You will be asked for the app secret (empty for an installed app) and sent to Reddit to approve access.",
 		Args: cobra.NoArgs,
@@ -90,108 +87,102 @@ func (a *app) connectCmd() *cobra.Command {
 			if err != nil && !errors.Is(err, errEmptySecret) {
 				return err
 			}
-			r := &publish.Reddit{Version: version, Creds: publish.RedditCredentials{
-				ClientID: clientID, ClientSecret: secret, RedirectURI: fmt.Sprintf("http://127.0.0.1:%d/callback", port),
-			}}
-			code, err := redditAuthorize(cmd.Context(), r.Creds, port)
-			if err != nil {
-				return err
-			}
-			if err := r.ExchangeCode(cmd.Context(), code); err != nil {
-				return err
-			}
-			return a.saveAccount("reddit", r.Creds.Username, r.Creds)
+			return a.connectReddit(cmd.Context(), clientID, secret, project)
 		},
 	}
 	reddit.Flags().StringVar(&clientID, "client-id", "", "your Reddit app's client id")
-	reddit.Flags().IntVar(&port, "port", 8765, "local port for the OAuth redirect")
 
 	cmd.AddCommand(bsky, masto, devto, reddit)
 	return cmd
 }
 
-func (a *app) connect(ctx context.Context, platform string, in publish.ConnectInput) error {
-	handle, creds, err := publish.Connect(ctx, platform, in)
+// connect sends the key to the server, which checks it with the platform.
+func (a *app) connect(ctx context.Context, body map[string]any, project int64) error {
+	c, err := a.api()
 	if err != nil {
 		return err
 	}
-	return a.saveAccount(platform, handle, creds)
-}
-
-func (a *app) saveAccount(platform, handle string, creds any) error {
-	st, err := a.openStore()
-	if err != nil {
+	if project != 0 {
+		body["project_id"] = project
+	}
+	var acc store.Account
+	if err := c.Do(ctx, "POST", "/api/accounts", nil, body, &acc); err != nil {
 		return err
 	}
-	defer st.Close()
-	acc, err := st.SaveAccount(0, platform, handle, creds)
-	if err != nil {
-		return err
-	}
-	_ = st.LogActivity(0, "account.connected", 0, platform+" "+handle)
 	if a.jsonFlag {
 		return printJSON(acc)
 	}
-	fmt.Printf("✓ connected %s as %s (account %d)\n", platform, handle, acc.ID)
+	fmt.Printf("✓ connected %s as %s (account %d)\n", acc.Platform, acc.Handle, acc.ID)
+	if project != 0 {
+		fmt.Printf("  project %d now publishes with it\n", project)
+	}
 	return nil
 }
 
-// redditAuthorize runs the local OAuth redirect: it opens the consent page and
-// waits for Reddit to send the browser back to 127.0.0.1 with a code.
-func redditAuthorize(ctx context.Context, creds publish.RedditCredentials, port int) (string, error) {
-	buf := make([]byte, 16)
-	_, _ = rand.Read(buf)
-	state := hex.EncodeToString(buf)
-	ln, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
+// connectReddit starts the sign-in on the server, which receives Reddit's
+// redirect, and waits until the new account shows up.
+func (a *app) connectReddit(ctx context.Context, clientID, secret string, project int64) error {
+	c, err := a.api()
 	if err != nil {
-		return "", fmt.Errorf("cannot listen on 127.0.0.1:%d: %w", port, err)
+		return err
 	}
-	type result struct {
-		code string
-		err  error
+	before, err := accountIDs(ctx, c)
+	if err != nil {
+		return err
 	}
-	done := make(chan result, 1)
-	srv := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/callback" {
-			http.NotFound(w, r)
-			return
-		}
-		q := r.URL.Query()
-		var res result
-		switch {
-		case q.Get("state") != state:
-			res.err = errors.New("OAuth state mismatch")
-		case q.Get("error") != "":
-			res.err = fmt.Errorf("reddit refused access: %s", q.Get("error"))
-		default:
-			res.code = q.Get("code")
-		}
-		if res.err != nil {
-			fmt.Fprintln(w, "Radaro: "+res.err.Error())
-		} else {
-			fmt.Fprintln(w, "Radaro: Reddit connected. You can close this tab.")
-		}
+	body := map[string]any{"client_id": clientID, "client_secret": secret}
+	if project != 0 {
+		body["project_id"] = project
+	}
+	var res struct {
+		AuthorizeURL string `json:"authorize_url"`
+		RedirectURI  string `json:"redirect_uri"`
+	}
+	if err := c.Do(ctx, "POST", "/api/accounts/reddit/authorize", nil, body, &res); err != nil {
+		return err
+	}
+	fmt.Printf("Your Reddit app's redirect URI must be:\n  %s\n", res.RedirectURI)
+	fmt.Println("Open this URL to approve access (waiting up to 10 minutes):")
+	fmt.Println("  " + res.AuthorizeURL)
+	openBrowser(res.AuthorizeURL)
+	deadline := time.Now().Add(10 * time.Minute)
+	for time.Now().Before(deadline) {
 		select {
-		case done <- res:
-		default:
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(3 * time.Second):
 		}
-	})}
-	go srv.Serve(ln)
-	defer srv.Close()
-
-	authURL := publish.RedditAuthorizeURL(creds.ClientID, creds.RedirectURI, state)
-	fmt.Println("Open this URL to approve access (waiting up to 5 minutes):")
-	fmt.Println("  " + authURL)
-	openBrowser(authURL)
-
-	select {
-	case res := <-done:
-		return res.code, res.err
-	case <-time.After(5 * time.Minute):
-		return "", errors.New("timed out waiting for the Reddit redirect")
-	case <-ctx.Done():
-		return "", ctx.Err()
+		var list struct {
+			Accounts []store.Account `json:"accounts"`
+		}
+		if err := c.Do(ctx, "GET", "/api/accounts", nil, nil, &list); err != nil {
+			return err
+		}
+		for _, acc := range list.Accounts {
+			if acc.Platform == "reddit" && !before[acc.ID] {
+				if a.jsonFlag {
+					return printJSON(acc)
+				}
+				fmt.Printf("✓ connected reddit as %s (account %d)\n", acc.Handle, acc.ID)
+				return nil
+			}
+		}
 	}
+	return errors.New("timed out waiting for the Reddit sign-in; if the browser showed an error, fix it and try again")
+}
+
+func accountIDs(ctx context.Context, c *client.Client) (map[int64]bool, error) {
+	var list struct {
+		Accounts []store.Account `json:"accounts"`
+	}
+	if err := c.Do(ctx, "GET", "/api/accounts", nil, nil, &list); err != nil {
+		return nil, err
+	}
+	ids := map[int64]bool{}
+	for _, acc := range list.Accounts {
+		ids[acc.ID] = true
+	}
+	return ids, nil
 }
 
 func openBrowser(url string) {
@@ -236,21 +227,23 @@ func readSecret(prompt string) (string, error) {
 
 func (a *app) accountsCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use: "accounts", Short: "List connected publishing accounts", Args: cobra.NoArgs,
-		RunE: a.withStore(func(st *store.Store, _ []string) error {
-			accs, err := st.Accounts(0, "")
-			if err != nil {
+		Use: "accounts", Short: "List your connected publishing accounts", Args: cobra.NoArgs,
+		RunE: a.apiCmd(func(ctx context.Context, c *client.Client, _ []string) error {
+			var list struct {
+				Accounts []store.Account `json:"accounts"`
+			}
+			if err := c.Do(ctx, "GET", "/api/accounts", nil, nil, &list); err != nil {
 				return err
 			}
 			if a.jsonFlag {
-				return printJSON(accs)
+				return printJSON(list.Accounts)
 			}
-			if len(accs) == 0 {
+			if len(list.Accounts) == 0 {
 				fmt.Println("No accounts yet. Connect one with: radaro connect bluesky|mastodon|devto|reddit")
 				return nil
 			}
 			fmt.Printf("%4s  %-9s %s\n", "ID", "PLATFORM", "HANDLE")
-			for _, acc := range accs {
+			for _, acc := range list.Accounts {
 				fmt.Printf("%4d  %-9s %s\n", acc.ID, acc.Platform, acc.Handle)
 			}
 			return nil
@@ -258,19 +251,14 @@ func (a *app) accountsCmd() *cobra.Command {
 	}
 	cmd.AddCommand(&cobra.Command{
 		Use: "remove <id>", Short: "Forget a connected account and its credentials", Args: cobra.ExactArgs(1),
-		RunE: a.withStore(func(st *store.Store, args []string) error {
+		RunE: a.apiCmd(func(ctx context.Context, c *client.Client, args []string) error {
 			id, err := strconv.ParseInt(args[0], 10, 64)
-			if err != nil {
-				return errors.New("account id must be a number")
+			if err != nil || id < 1 {
+				return errors.New("account id must be a positive number")
 			}
-			ok, err := st.DeleteAccount(0, id)
-			if err != nil {
+			if err := c.Do(ctx, "DELETE", "/api/accounts/"+args[0], nil, nil, nil); err != nil {
 				return err
 			}
-			if !ok {
-				return fmt.Errorf("account %d does not exist", id)
-			}
-			_ = st.LogActivity(0, "account.removed", 0, "account "+args[0])
 			fmt.Printf("✓ removed account %d\n", id)
 			return nil
 		}),

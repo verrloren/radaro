@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/verrloren/radaro/internal/client"
 	"github.com/verrloren/radaro/internal/model"
 	"github.com/verrloren/radaro/internal/publish"
 	"github.com/verrloren/radaro/internal/server"
@@ -20,37 +23,28 @@ import (
 
 func (a *app) opportunitiesCmd() *cobra.Command {
 	var (
-		days   int
-		limit  int
-		source string
+		days, limit int
+		source      string
+		project     int64
 	)
 	cmd := &cobra.Command{
 		Use:   "opportunities [keyword]",
 		Short: "Recent mentions worth answering that have no draft yet",
 		Args:  cobra.MaximumNArgs(1),
-		RunE: a.withStore(func(st *store.Store, args []string) error {
-			sc := store.Scope{}
+		RunE: a.apiCmd(func(ctx context.Context, c *client.Client, args []string) error {
+			q := url.Values{"days": {strconv.Itoa(days)}, "limit": {strconv.Itoa(limit)}}
 			if len(args) == 1 {
-				sc.Query = strings.TrimSpace(args[0])
+				q.Set("q", strings.TrimSpace(args[0]))
 			}
-			mentions, err := st.Mentions(store.MentionFilter{Scope: sc, Source: source})
-			if err != nil {
+			if source != "" {
+				q.Set("source", source)
+			}
+			if project != 0 {
+				q.Set("p", strconv.FormatInt(project, 10))
+			}
+			var out []*model.Mention
+			if err := c.Do(ctx, "GET", "/api/opportunities", q, nil, &out); err != nil {
 				return err
-			}
-			drafted, err := st.DraftedMentionIDs(0)
-			if err != nil {
-				return err
-			}
-			cutoff := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
-			out := []server.MentionView{}
-			for _, m := range mentions {
-				if m.CreatedAt.Before(cutoff) || drafted[m.ID] || m.URL == nil {
-					continue
-				}
-				out = append(out, server.View(m))
-				if len(out) == limit {
-					break
-				}
 			}
 			if a.jsonFlag {
 				return printJSON(out)
@@ -59,9 +53,9 @@ func (a *app) opportunitiesCmd() *cobra.Command {
 				fmt.Println("No open opportunities. Scan first: radaro track \"keyword\"")
 				return nil
 			}
-			for _, v := range out {
-				fmt.Printf("%s  %-13s %-9s %s\n", v.ID, v.Source, sentimentOf(v.Mention), ago(v.CreatedAt))
-				fmt.Printf("    %s\n    %s\n", clip(v.Content(), 140), deref(v.URL))
+			for _, m := range out {
+				fmt.Printf("%s  %-13s %-9s %s\n", m.ID, m.Source, sentimentOf(m), ago(m.CreatedAt))
+				fmt.Printf("    %s\n    %s\n", clip(m.Content(), 140), deref(m.URL))
 			}
 			return nil
 		}),
@@ -69,7 +63,22 @@ func (a *app) opportunitiesCmd() *cobra.Command {
 	cmd.Flags().IntVar(&days, "days", 14, "only mentions from the last N days")
 	cmd.Flags().IntVar(&limit, "limit", 20, "maximum results")
 	cmd.Flags().StringVar(&source, "source", "", "only this source (e.g. reddit)")
+	cmd.Flags().Int64Var(&project, "project", 0, "only this project's keywords")
 	return cmd
+}
+
+// newDraft is the body of POST /api/drafts.
+type newDraft struct {
+	ProjectID int64  `json:"project_id,omitempty"`
+	Platform  string `json:"platform"`
+	AccountID int64  `json:"account_id,omitempty"`
+	Kind      string `json:"kind,omitempty"`
+	Community string `json:"community,omitempty"`
+	Title     string `json:"title,omitempty"`
+	Body      string `json:"body"`
+	ReplyTo   string `json:"reply_to,omitempty"`
+	Query     string `json:"query,omitempty"`
+	MentionID string `json:"mention_id,omitempty"`
 }
 
 func (a *app) draftCmd() *cobra.Command {
@@ -78,16 +87,15 @@ func (a *app) draftCmd() *cobra.Command {
 		Short: "Write, review and approve posts before anything is published",
 	}
 
-	var n store.NewDraft
+	var n newDraft
 	var bodyFile string
 	add := &cobra.Command{
 		Use: "add", Short: "Create a draft (a new post, or a reply with --reply-to / --mention)", Args: cobra.NoArgs,
-		RunE: a.withStore(func(st *store.Store, _ []string) error {
+		RunE: a.apiCmd(func(ctx context.Context, c *client.Client, _ []string) error {
 			if n.Platform == "" {
 				return errors.New("--platform is required (reddit, bluesky, mastodon, devto)")
 			}
-			pl, ok := publish.LookupPlatform(n.Platform)
-			if !ok {
+			if _, ok := publish.LookupPlatform(n.Platform); !ok {
 				return fmt.Errorf("unknown platform %q", n.Platform)
 			}
 			if bodyFile != "" {
@@ -97,41 +105,14 @@ func (a *app) draftCmd() *cobra.Command {
 				}
 				n.Body = body
 			}
-			if n.MentionID != "" && n.ReplyTo == "" {
-				m, err := mentionByID(st, n.MentionID)
-				if err != nil {
-					return err
-				}
-				if m.Source == n.Platform && m.URL != nil {
-					n.ReplyTo = *m.URL // answering the thread it came from
-				}
-				n.Query = m.Query
-			}
-			if n.Kind == "" {
-				n.Kind = "post"
-				if n.ReplyTo != "" {
-					n.Kind = "reply"
-				}
-			}
-			if err := pl.Validate(publish.Post{Kind: n.Kind, Community: n.Community, Title: n.Title, Body: n.Body, ReplyTo: n.ReplyTo}); err != nil {
+			var d store.Draft
+			if err := c.Do(ctx, "POST", "/api/drafts", nil, n, &d); err != nil {
 				return err
 			}
-			if n.AccountID != 0 {
-				if acc, err := st.Account(0, n.AccountID); err != nil {
-					return err
-				} else if acc == nil || acc.Platform != n.Platform {
-					return fmt.Errorf("account %d is not a %s account", n.AccountID, n.Platform)
-				}
-			}
-			d, err := st.CreateDraft(n)
-			if err != nil {
-				return err
-			}
-			_ = st.LogActivity(0, "draft.created", d.ID, draftSummary(d))
 			if a.jsonFlag {
 				return printJSON(d)
 			}
-			fmt.Printf("✓ draft %d created (%s). Review with: radaro draft show %d\n", d.ID, draftSummary(d), d.ID)
+			fmt.Printf("✓ draft %d created (%s). Review with: radaro draft show %d\n", d.ID, server.DraftSummary(&d), d.ID)
 			return nil
 		}),
 	}
@@ -143,16 +124,21 @@ func (a *app) draftCmd() *cobra.Command {
 	add.Flags().StringVar(&bodyFile, "body-file", "", "read the text from a file, or - for stdin")
 	add.Flags().StringVar(&n.ReplyTo, "reply-to", "", "link to the post or comment to answer")
 	add.Flags().StringVar(&n.MentionID, "mention", "", "the opportunity (mention id) this answers")
-	add.Flags().Int64Var(&n.AccountID, "account", 0, "account id (default: the only account for the platform)")
+	add.Flags().Int64Var(&n.ProjectID, "project", 0, "project the draft belongs to (default: your Default project)")
+	add.Flags().Int64Var(&n.AccountID, "account", 0, "account id (default: the project's account for the platform)")
 	add.Flags().StringVar(&n.Query, "query", "", "keyword this draft promotes")
 
 	var status string
 	var limit int
 	list := &cobra.Command{
 		Use: "list", Short: "List drafts, newest first", Args: cobra.NoArgs,
-		RunE: a.withStore(func(st *store.Store, _ []string) error {
-			ds, err := st.Drafts(0, status, limit)
-			if err != nil {
+		RunE: a.apiCmd(func(ctx context.Context, c *client.Client, _ []string) error {
+			q := url.Values{"limit": {strconv.Itoa(limit)}}
+			if status != "" {
+				q.Set("status", status)
+			}
+			var ds []store.Draft
+			if err := c.Do(ctx, "GET", "/api/drafts", q, nil, &ds); err != nil {
 				return err
 			}
 			if a.jsonFlag {
@@ -178,7 +164,7 @@ func (a *app) draftCmd() *cobra.Command {
 
 	show := &cobra.Command{
 		Use: "show <id>", Short: "Show a draft in full", Args: cobra.ExactArgs(1),
-		RunE: a.withDraft(func(st *store.Store, d *store.Draft) error {
+		RunE: a.withDraft(func(ctx context.Context, c *client.Client, d *store.Draft) error {
 			if a.jsonFlag {
 				return printJSON(d)
 			}
@@ -193,33 +179,32 @@ func (a *app) draftCmd() *cobra.Command {
 	var editCmd *cobra.Command
 	editCmd = &cobra.Command{
 		Use: "edit <id>", Short: "Change a draft's text (it goes back to review)", Args: cobra.ExactArgs(1),
-		RunE: a.withDraft(func(st *store.Store, d *store.Draft) error {
-			var e store.DraftEdit
+		RunE: a.withDraft(func(ctx context.Context, c *client.Client, d *store.Draft) error {
+			e := map[string]string{}
 			flags := editCmd.Flags()
 			if flags.Changed("title") {
-				e.Title = &edit.title
+				e["title"] = edit.title
 			}
 			if flags.Changed("body") {
-				e.Body = &edit.body
+				e["body"] = edit.body
 			}
 			if flags.Changed("body-file") {
 				body, err := readBody(edit.bodyFile)
 				if err != nil {
 					return err
 				}
-				e.Body = &body
+				e["body"] = body
 			}
 			if flags.Changed("community") {
-				e.Community = &edit.community
+				e["community"] = edit.community
 			}
-			updated, err := st.EditDraft(0, d.ID, e)
-			if err != nil {
+			var updated store.Draft
+			if err := c.Do(ctx, "PATCH", draftPath(d.ID, ""), nil, e, &updated); err != nil {
 				return err
 			}
-			if err := validateDraft(updated); err != nil {
+			if err := server.ValidateDraft(&updated); err != nil {
 				return fmt.Errorf("saved, but the draft is not publishable yet: %w", err)
 			}
-			_ = st.LogActivity(0, "draft.edited", d.ID, draftSummary(updated))
 			if a.jsonFlag {
 				return printJSON(updated)
 			}
@@ -234,15 +219,10 @@ func (a *app) draftCmd() *cobra.Command {
 
 	approve := &cobra.Command{
 		Use: "approve <id>", Short: "Approve a draft for publishing (the human-in-the-loop step)", Args: cobra.ExactArgs(1),
-		RunE: a.withDraft(func(st *store.Store, d *store.Draft) error {
-			if err := validateDraft(d); err != nil {
+		RunE: a.withDraft(func(ctx context.Context, c *client.Client, d *store.Draft) error {
+			if err := c.Do(ctx, "POST", draftPath(d.ID, "/approve"), nil, nil, d); err != nil {
 				return err
 			}
-			d, err := st.ApproveDraft(0, d.ID)
-			if err != nil {
-				return err
-			}
-			_ = st.LogActivity(0, "draft.approved", d.ID, draftSummary(d))
 			if a.jsonFlag {
 				return printJSON(d)
 			}
@@ -253,12 +233,10 @@ func (a *app) draftCmd() *cobra.Command {
 
 	skip := &cobra.Command{
 		Use: "skip <id>", Short: "Discard a draft", Args: cobra.ExactArgs(1),
-		RunE: a.withDraft(func(st *store.Store, d *store.Draft) error {
-			d, err := st.SkipDraft(0, d.ID)
-			if err != nil {
+		RunE: a.withDraft(func(ctx context.Context, c *client.Client, d *store.Draft) error {
+			if err := c.Do(ctx, "POST", draftPath(d.ID, "/skip"), nil, nil, d); err != nil {
 				return err
 			}
-			_ = st.LogActivity(0, "draft.skipped", d.ID, draftSummary(d))
 			fmt.Printf("✓ draft %d skipped\n", d.ID)
 			return nil
 		}),
@@ -273,38 +251,17 @@ func (a *app) publishCmd() *cobra.Command {
 		Use:   "publish <draft-id>",
 		Short: "Publish an approved draft to its platform",
 		Args:  cobra.ExactArgs(1),
-		RunE: a.withDraft(func(st *store.Store, d *store.Draft) error {
+		RunE: a.withDraft(func(ctx context.Context, c *client.Client, d *store.Draft) error {
 			if d.Status != store.DraftApproved {
 				return fmt.Errorf("draft %d is not approved (status: %s); approve it first: radaro draft approve %d", d.ID, d.Status, d.ID)
 			}
-			if err := validateDraft(d); err != nil {
+			if err := c.Do(ctx, "POST", draftPath(d.ID, "/publish"), nil, nil, d); err != nil {
 				return err
 			}
-			acc, err := accountFor(st, d)
-			if err != nil {
-				return err
-			}
-			pub, err := publish.New(acc.Platform, acc.Credentials, version)
-			if err != nil {
-				return err
-			}
-			if _, err := st.BeginPublish(0, d.ID); err != nil {
-				return err
-			}
-			res, pubErr := pub.Publish(a.ctx(), postOf(d))
-			d, err = st.FinishPublish(d.ID, res.RemoteID, res.URL, pubErr)
-			if err != nil {
-				return err
-			}
-			if pubErr != nil {
-				_ = st.LogActivity(0, "draft.failed", d.ID, pubErr.Error())
-				return fmt.Errorf("publishing draft %d failed: %w", d.ID, pubErr)
-			}
-			_ = st.LogActivity(0, "draft.published", d.ID, acc.Platform+" "+acc.Handle+" "+res.URL)
 			if a.jsonFlag {
 				return printJSON(d)
 			}
-			fmt.Printf("✓ published draft %d as %s: %s\n", d.ID, acc.Handle, res.URL)
+			fmt.Printf("✓ published draft %d: %s\n", d.ID, deref(d.RemoteURL))
 			return nil
 		}),
 	}
@@ -316,51 +273,25 @@ func (a *app) statsCmd() *cobra.Command {
 		Use:   "stats",
 		Short: "Engagement of published drafts (refreshed from each platform)",
 		Args:  cobra.NoArgs,
-		RunE: a.withStore(func(st *store.Store, _ []string) error {
-			ds, err := st.Drafts(0, store.DraftPublished, 0)
-			if err != nil {
+		RunE: a.apiCmd(func(ctx context.Context, c *client.Client, _ []string) error {
+			var res struct {
+				Published []store.Draft `json:"published"`
+				Errors    []string      `json:"errors"`
+			}
+			if err := c.Do(ctx, "GET", "/api/stats", url.Values{"refresh": {strconv.FormatBool(refresh)}}, nil, &res); err != nil {
 				return err
 			}
-			var problems []string
-			if refresh {
-				for _, d := range ds {
-					if d.RemoteID == nil {
-						continue
-					}
-					acc, err := accountFor(st, d)
-					if err != nil {
-						problems = append(problems, fmt.Sprintf("draft %d: %v", d.ID, err))
-						continue
-					}
-					pub, err := publish.New(acc.Platform, acc.Credentials, version)
-					if err != nil {
-						problems = append(problems, fmt.Sprintf("draft %d: %v", d.ID, err))
-						continue
-					}
-					m, err := pub.Metrics(a.ctx(), *d.RemoteID)
-					if err != nil {
-						problems = append(problems, fmt.Sprintf("draft %d: %v", d.ID, err))
-						continue
-					}
-					if err := st.SaveMetrics(d.ID, m); err != nil {
-						return err
-					}
-				}
-				if ds, err = st.Drafts(0, store.DraftPublished, 0); err != nil {
-					return err
-				}
-			}
 			if a.jsonFlag {
-				return printJSON(map[string]any{"published": ds, "errors": problems})
+				return printJSON(res)
 			}
-			for _, p := range problems {
+			for _, p := range res.Errors {
 				fmt.Printf("  ! %s\n", p)
 			}
-			if len(ds) == 0 {
+			if len(res.Published) == 0 {
 				fmt.Println("Nothing published yet.")
 				return nil
 			}
-			for _, d := range ds {
+			for _, d := range res.Published {
 				fmt.Printf("%4d  %-9s %s\n      %s  %s\n", d.ID, d.Platform, deref(d.RemoteURL), metricsLine(d.Metrics), clip(d.Body, 60))
 			}
 			return nil
@@ -374,9 +305,9 @@ func (a *app) activityCmd() *cobra.Command {
 	var limit int
 	cmd := &cobra.Command{
 		Use: "activity", Short: "What was drafted, approved and published, newest first", Args: cobra.NoArgs,
-		RunE: a.withStore(func(st *store.Store, _ []string) error {
-			acts, err := st.Activities(0, limit)
-			if err != nil {
+		RunE: a.apiCmd(func(ctx context.Context, c *client.Client, _ []string) error {
+			var acts []store.Activity
+			if err := c.Do(ctx, "GET", "/api/activity", url.Values{"limit": {strconv.Itoa(limit)}}, nil, &acts); err != nil {
 				return err
 			}
 			if a.jsonFlag {
@@ -398,56 +329,26 @@ func (a *app) activityCmd() *cobra.Command {
 
 // --- helpers ------------------------------------------------------------------
 
-func (a *app) withDraft(fn func(*store.Store, *store.Draft) error) func(*cobra.Command, []string) error {
-	return a.withStore(func(st *store.Store, args []string) error {
+func draftPath(id int64, suffix string) string {
+	return "/api/drafts/" + strconv.FormatInt(id, 10) + suffix
+}
+
+// withDraft loads the draft named by the first argument.
+func (a *app) withDraft(fn func(context.Context, *client.Client, *store.Draft) error) func(*cobra.Command, []string) error {
+	return a.apiCmd(func(ctx context.Context, c *client.Client, args []string) error {
 		id, err := strconv.ParseInt(args[0], 10, 64)
 		if err != nil || id < 1 {
 			return errors.New("draft id must be a positive number")
 		}
-		d, err := st.Draft(0, id)
-		if err != nil {
+		var d store.Draft
+		if err := c.Do(ctx, "GET", draftPath(id, ""), nil, nil, &d); err != nil {
+			if client.StatusOf(err) == 404 {
+				return fmt.Errorf("draft %d does not exist", id)
+			}
 			return err
 		}
-		if d == nil {
-			return fmt.Errorf("draft %d does not exist", id)
-		}
-		return fn(st, d)
+		return fn(ctx, c, &d)
 	})
-}
-
-func postOf(d *store.Draft) publish.Post {
-	return publish.Post{Kind: d.Kind, Community: deref(d.Community), Title: deref(d.Title), Body: d.Body,
-		ReplyTo: deref(d.ReplyTo), IdempotencyKey: fmt.Sprintf("radaro-draft-%d", d.ID)}
-}
-
-func validateDraft(d *store.Draft) error {
-	pl, ok := publish.LookupPlatform(d.Platform)
-	if !ok {
-		return fmt.Errorf("unknown platform %q", d.Platform)
-	}
-	return pl.Validate(postOf(d))
-}
-
-// accountFor picks the draft's account, or the only one for its platform.
-func accountFor(st *store.Store, d *store.Draft) (*store.Account, error) {
-	acc, err := st.PublishAccount(0, d)
-	if errors.Is(err, store.ErrNotFound) && d.AccountID == nil {
-		return nil, fmt.Errorf("no %s account connected; run radaro connect %s", d.Platform, d.Platform)
-	}
-	return acc, err
-}
-
-func mentionByID(st *store.Store, id string) (*model.Mention, error) {
-	ms, err := st.Mentions(store.MentionFilter{})
-	if err != nil {
-		return nil, err
-	}
-	for _, m := range ms {
-		if m.ID == id {
-			return m, nil
-		}
-	}
-	return nil, fmt.Errorf("mention %s not found", id)
 }
 
 func readBody(path string) (string, error) {
@@ -459,20 +360,6 @@ func readBody(path string) (string, error) {
 		b, err = os.ReadFile(path)
 	}
 	return strings.TrimRight(string(b), "\n"), err
-}
-
-func draftSummary(d *store.Draft) string {
-	where := d.Platform
-	if d.Community != nil && d.Platform == "reddit" {
-		where += " r/" + strings.TrimPrefix(*d.Community, "r/")
-	}
-	if d.Kind == "reply" {
-		return where + " reply to " + deref(d.ReplyTo)
-	}
-	if d.Title != nil {
-		return where + " post “" + clip(*d.Title, 60) + "”"
-	}
-	return where + " post “" + clip(d.Body, 60) + "”"
 }
 
 func printDraft(d *store.Draft) {

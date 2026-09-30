@@ -424,6 +424,7 @@ func (s *Store) ExistingIDs(query string, ids []string) (map[string]bool, error)
 // MentionFilter narrows Mentions. Limit 0 means no limit.
 type MentionFilter struct {
 	Scope
+	ID        string // one mention (it may appear under several keywords)
 	Source    string
 	Sentiment model.Sentiment
 	Limit     int
@@ -437,6 +438,10 @@ func (s *Store) Mentions(f MentionFilter) ([]*model.Mention, error) {
 	}
 	q := `SELECT id, source, query, author, title, text, url, created_at, score, sentiment, sentiment_score, theme
 		FROM mentions WHERE 1=1` + where
+	if f.ID != "" {
+		q += " AND id = ?"
+		args = append(args, f.ID)
+	}
 	if f.Source != "" {
 		q += " AND source = ?"
 		args = append(args, f.Source)

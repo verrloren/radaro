@@ -194,6 +194,41 @@ interface Platform { name: string; label: string; replies: boolean; titles: bool
 
 // A connected publishing account; credentials are never returned.
 interface Account { id: number; platform: string; handle: string; created_at: string; updated_at: string; }
+
+interface Draft {
+  id: number;
+  project_id: number | null;
+  platform: string;
+  account_id: number | null;
+  kind: "post" | "reply";
+  community: string | null;
+  title: string | null;
+  body: string;
+  reply_to: string | null;
+  query: string | null;
+  mention_id: string | null;
+  status: "draft" | "approved" | "publishing" | "published" | "failed" | "skipped";
+  remote_id: string | null;
+  remote_url: string | null;
+  error: string | null;
+  metrics: Record<string, unknown> | null;
+  metrics_at: string | null;
+  created_at: string;
+  updated_at: string;
+  approved_at: string | null;
+  published_at: string | null;
+}
+
+interface Activity { id: number; at: string; action: string; draft_id: number | null; detail: string; }
+
+interface Report {
+  query?: string;
+  summary: Summary;
+  net: number;
+  themes: Theme[];
+  top_positive: Mention[];
+  top_negative: Mention[];
+}
 ```
 
 ## Endpoints
@@ -229,7 +264,20 @@ does not exist.
 | DELETE | `/api/projects/{id}/accounts/{platform}` | — | `ProjectAccount[]` |
 | GET | `/api/summary` | `?q=` or `?p=` (mutually exclusive; neither = everything) | `{"summary": Summary, "timeseries": TimeseriesPoint[], "net": number, "themes": Theme[]}` |
 | GET | `/api/mentions` | `?q=` or `?p=`, `&source=`, `&sentiment=`, `&limit=` (1–1000, default 200) | `Mention[]`, newest first |
-| POST | `/api/track` | `{"query": string, "sources": string[], "mode": "incremental" \| "backfill", "pages": number, "project_id"?: number}` | `TrackResult` (may take several seconds) |
+| POST | `/api/track` | `{"query": string, "sources"?: string[], "mode": "incremental" \| "backfill", "pages": number, "limit"?: number, "project_id"?: number}` | `TrackResult` (may take minutes). Without `sources`, the keyword's own, else `RADARO_SOURCES`; `limit` (1–100) is items per source page. The keyword is filed under `project_id`, or stays where it is, or goes to Default |
+| GET | `/api/report` | `?q=` or `?p=` | `Report` |
+| GET | `/api/export` | `?q=` or `?p=` | every `Mention` in scope, complete (for backups and CSV) |
+| GET | `/api/opportunities` | `?q=` or `?p=`, `&days=` (1–365, default 14), `&limit=` (1–200, default 20), `&source=` | `Mention[]`: recent mentions with a link and no draft yet |
+| GET | `/api/drafts` | `?status=`, `&limit=` (1–1000, default 50) | `Draft[]`, newest first |
+| POST | `/api/drafts` | `{"platform": string, "body": string, "project_id"?, "account_id"?, "kind"?: "post" \| "reply", "community"?, "title"?, "reply_to"?, "query"?, "mention_id"?}` | `201 Draft`. With `mention_id` and no `reply_to`, a reply answers the mention's thread on the same platform. `422` when the platform's rules reject it |
+| GET | `/api/drafts/{id}` | — | `Draft` |
+| PATCH | `/api/drafts/{id}` | `{"title"?, "body"?, "community"?}` | `Draft`, back in review (`draft`); `409` once published |
+| POST | `/api/drafts/{id}/approve` | — | `Draft` (`approved`); `422` if the platform would reject it |
+| POST | `/api/drafts/{id}/skip` | — | `Draft` (`skipped`) |
+| POST | `/api/drafts/{id}/publish` | — | `Draft` (`published`). Only `approved` drafts (`409` otherwise); the draft is claimed (`publishing`) before any network call. `502 {"error", "draft"}` when the platform fails (`failed`, approve again to retry) |
+| GET | `/api/stats` | `?refresh=true` fetches fresh metrics | `{"published": Draft[], "errors": string[]}` |
+| GET | `/api/activity` | `?limit=` (1–1000, default 50) | `Activity[]`, newest first |
+| GET | `/api/status` | — | the user, sources, accounts, keywords and draft counts; the admin also sees the database path |
 | GET | `/api/settings/sources` | — | `SourceSettings[]` for the sources that take keys (RSS, X, YouTube); Reddit and Mastodon scan with a connected account instead |
 | PUT | `/api/settings/sources/{name}` | `{"values": Record<string, string>}` | admin only (`403` otherwise). `SourceSettings`; a blank secret keeps the saved one, all blank removes the saved settings; `422` unknown field; `404` source without settings |
 | DELETE | `/api/settings/sources/{name}` | — | admin only. `SourceSettings` after falling back to the environment |

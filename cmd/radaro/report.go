@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"math"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,58 +18,24 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/verrloren/radaro/internal/client"
 	"github.com/verrloren/radaro/internal/model"
-	"github.com/verrloren/radaro/internal/pipeline"
+	"github.com/verrloren/radaro/internal/server"
 	"github.com/verrloren/radaro/internal/sources"
-	"github.com/verrloren/radaro/internal/store"
 )
 
-type reportJSON struct {
-	Query       string             `json:"query,omitempty"`
-	Project     *store.Project     `json:"project,omitempty"`
-	Summary     store.Summary      `json:"summary"`
-	Net         float64            `json:"net"`
-	Themes      []store.ThemeCount `json:"themes"`
-	TopPositive []*model.Mention   `json:"top_positive"`
-	TopNegative []*model.Mention   `json:"top_negative"`
-}
-
-func buildReport(st *store.Store, sc store.Scope) (*reportJSON, error) {
-	sum, err := st.Summary(sc)
-	if err != nil {
-		return nil, err
-	}
-	themes, err := st.Themes(sc, 6)
-	if err != nil {
-		return nil, err
-	}
-	r := &reportJSON{Query: sc.Query, Summary: sum, Net: store.NetSentiment(sum), Themes: themes,
-		TopPositive: []*model.Mention{}, TopNegative: []*model.Mention{}}
-	for _, s := range []model.Sentiment{model.Positive, model.Negative} {
-		ms, err := st.Mentions(store.MentionFilter{Scope: sc, Sentiment: s, Limit: 2})
-		if err != nil {
-			return nil, err
-		}
-		if s == model.Positive {
-			r.TopPositive = append(r.TopPositive, ms...)
-		} else {
-			r.TopNegative = append(r.TopNegative, ms...)
-		}
-	}
-	return r, nil
-}
-
-func printReport(st *store.Store, query string) error {
-	r, err := buildReport(st, store.Scope{Query: query})
-	if err != nil {
+// printReport prints the server's report for a keyword.
+func (a *app) printReport(ctx context.Context, c *client.Client, query string) error {
+	var r server.Report
+	if err := c.Do(ctx, "GET", "/api/report", url.Values{"q": {query}}, nil, &r); err != nil {
 		return err
 	}
 	fmt.Printf("\n“%s” — %d mentions\n", query, r.Summary.Total)
-	printReportBody(r)
+	printReportBody(&r)
 	return nil
 }
 
-func printReportBody(r *reportJSON) {
+func printReportBody(r *server.Report) {
 	total := max(r.Summary.Total, 1)
 	for _, s := range []string{"positive", "neutral", "negative"} {
 		n := r.Summary.BySentiment[s]
@@ -128,13 +96,12 @@ func (a *app) reportCmd() *cobra.Command {
 		Short: "Print a sentiment + theme report for a keyword (default: most recent)",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			st, err := a.openStore()
+			c, err := a.api()
 			if err != nil {
 				return err
 			}
-			defer st.Close()
-			queries, err := st.Queries(0, 0)
-			if err != nil {
+			var queries []string
+			if err := c.Do(cmd.Context(), "GET", "/api/queries", nil, nil, &queries); err != nil {
 				return err
 			}
 			q := ""
@@ -144,19 +111,19 @@ func (a *app) reportCmd() *cobra.Command {
 				q = queries[0]
 			}
 			if q == "" {
-				return errors.New(`no data yet — run radaro track "keyword" or radaro demo`)
+				return errors.New(`no data yet — run radaro track "keyword"`)
 			}
 			if !containsString(queries, q) {
 				return fmt.Errorf("no data found for “%s”", q)
 			}
 			if a.jsonFlag {
-				r, err := buildReport(st, store.Scope{Query: q})
-				if err != nil {
+				var r server.Report
+				if err := c.Do(cmd.Context(), "GET", "/api/report", url.Values{"q": {q}}, nil, &r); err != nil {
 					return err
 				}
 				return printJSON(r)
 			}
-			return printReport(st, q)
+			return a.printReport(cmd.Context(), c, q)
 		},
 	}
 }
@@ -164,10 +131,10 @@ func (a *app) reportCmd() *cobra.Command {
 func (a *app) sourcesCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "sources",
-		Short: "List available mention sources",
+		Short: "List available mention sources and which are set up on the server",
 		Args:  cobra.NoArgs,
-		RunE: a.withStore(func(st *store.Store, _ []string) error {
-			srcOpts, err := pipeline.SourceOptions(a.cfg, st, 0, 0)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			c, err := a.api()
 			if err != nil {
 				return err
 			}
@@ -175,15 +142,17 @@ func (a *app) sourcesCmd() *cobra.Command {
 				sources.Info
 				Configured bool `json:"configured"`
 			}
-			var rows []row
-			for _, info := range sources.All() {
-				rows = append(rows, row{info, sources.Configured(info.Name, srcOpts)})
+			var meta struct {
+				Sources []row `json:"sources"`
+			}
+			if err := c.Do(cmd.Context(), "GET", "/api/meta", nil, nil, &meta); err != nil {
+				return err
 			}
 			if a.jsonFlag {
-				return printJSON(rows)
+				return printJSON(meta.Sources)
 			}
 			fmt.Printf("%-15s %-16s %s\n", "NAME", "LABEL", "STATUS")
-			for _, r := range rows {
+			for _, r := range meta.Sources {
 				status := "zero-config"
 				if r.NeedsConfig {
 					status = "needs setup"
@@ -194,39 +163,35 @@ func (a *app) sourcesCmd() *cobra.Command {
 				fmt.Printf("%-15s %-16s %s\n", r.Name, r.Label, status)
 			}
 			return nil
-		}),
+		},
 	}
 }
 
 func (a *app) exportCmd() *cobra.Command {
 	var format, output string
+	var project int64
 	cmd := &cobra.Command{
 		Use:   "export [keyword]",
-		Short: "Export complete mention records as JSON or CSV (default: all keywords)",
+		Short: "Export complete mention records as JSON or CSV (default: all your keywords)",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			format = strings.ToLower(strings.TrimSpace(format))
 			if format != "json" && format != "csv" {
 				return errors.New("--format must be json or csv")
 			}
-			st, err := a.openStore()
+			c, err := a.api()
 			if err != nil {
 				return err
 			}
-			defer st.Close()
-			q := ""
+			q := url.Values{}
 			if len(args) == 1 {
-				q = strings.TrimSpace(args[0])
-				queries, err := st.Queries(0, 0)
-				if err != nil {
-					return err
-				}
-				if !containsString(queries, q) {
-					return fmt.Errorf("no data found for “%s”", q)
-				}
+				q.Set("q", strings.TrimSpace(args[0]))
 			}
-			rows, err := st.Mentions(store.MentionFilter{Scope: store.Scope{Query: q}})
-			if err != nil {
+			if project != 0 {
+				q.Set("p", strconv.FormatInt(project, 10))
+			}
+			var rows []*model.Mention
+			if err := c.Do(cmd.Context(), "GET", "/api/export", q, nil, &rows); err != nil {
 				return err
 			}
 			if len(rows) == 0 {
@@ -255,6 +220,7 @@ func (a *app) exportCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&format, "format", "f", "json", "output format: json or csv")
 	cmd.Flags().StringVarP(&output, "output", "o", "-", "output file, or - for stdout")
+	cmd.Flags().Int64Var(&project, "project", 0, "only this project's keywords")
 	return cmd
 }
 

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -10,9 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/verrloren/radaro/internal/config"
-	"github.com/verrloren/radaro/internal/pipeline"
-	"github.com/verrloren/radaro/internal/sources"
+	"github.com/verrloren/radaro/internal/client"
 	"github.com/verrloren/radaro/internal/store"
 	"github.com/verrloren/radaro/skills"
 )
@@ -20,53 +20,43 @@ import (
 func (a *app) statusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
-		Short: "What is set up: database, sources, accounts, keywords and drafts",
+		Short: "What is set up for you: server, sources, accounts, keywords and drafts",
 		Args:  cobra.NoArgs,
-		RunE: a.withStore(func(st *store.Store, _ []string) error {
-			accounts, err := st.Accounts(0, "")
-			if err != nil {
+		RunE: a.apiCmd(func(ctx context.Context, c *client.Client, _ []string) error {
+			var st struct {
+				Version        string          `json:"version"`
+				User           store.User      `json:"user"`
+				DefaultSources []string        `json:"default_sources"`
+				Sources        []sourceStatus  `json:"sources"`
+				Accounts       []store.Account `json:"accounts"`
+				Projects       int             `json:"projects"`
+				Keywords       []string        `json:"keywords"`
+				Drafts         map[string]int  `json:"drafts"`
+				Database       string          `json:"database,omitempty"`
+			}
+			if err := c.Do(ctx, "GET", "/api/status", nil, nil, &st); err != nil {
 				return err
-			}
-			queries, err := st.Queries(0, 0)
-			if err != nil {
-				return err
-			}
-			drafts, err := st.DraftCounts(0)
-			if err != nil {
-				return err
-			}
-			srcOpts, err := pipeline.SourceOptions(a.cfg, st, 0, 0)
-			if err != nil {
-				return err
-			}
-			var srcs []sourceStatus
-			for _, info := range sources.All() {
-				srcs = append(srcs, sourceStatus{info.Name, sources.Configured(info.Name, srcOpts)})
-			}
-			status := map[string]any{
-				"version":         version,
-				"database":        st.Path(),
-				"data_dir":        config.DataDir(),
-				"default_sources": a.cfg.Sources,
-				"sources":         srcs,
-				"accounts":        accounts,
-				"keywords":        queries,
-				"drafts":          drafts,
 			}
 			if a.jsonFlag {
-				return printJSON(status)
+				out := map[string]any{"server": c.Server, "cli_version": version}
+				b, _ := json.Marshal(st)
+				_ = json.Unmarshal(b, &out)
+				return printJSON(out)
 			}
-			fmt.Printf("radaro %s\n", version)
-			fmt.Printf("database   %s\n", st.Path())
-			fmt.Printf("sources    %s (default: %s)\n", configuredSources(srcs), strings.Join(a.cfg.Sources, ", "))
-			if len(accounts) == 0 {
+			fmt.Printf("radaro %s · server %s (%s)\n", version, c.Server, st.Version)
+			fmt.Printf("user       %s\n", st.User.Email)
+			if st.Database != "" {
+				fmt.Printf("database   %s\n", st.Database)
+			}
+			fmt.Printf("sources    %s (default: %s)\n", configuredSources(st.Sources), strings.Join(st.DefaultSources, ", "))
+			if len(st.Accounts) == 0 {
 				fmt.Println("accounts   none — connect with: radaro connect bluesky|mastodon|devto|reddit")
 			}
-			for _, acc := range accounts {
+			for _, acc := range st.Accounts {
 				fmt.Printf("account    #%d %s %s\n", acc.ID, acc.Platform, acc.Handle)
 			}
-			fmt.Printf("keywords   %d tracked\n", len(queries))
-			fmt.Printf("drafts     %s\n", countsLine(drafts))
+			fmt.Printf("projects   %d · keywords %d tracked\n", st.Projects, len(st.Keywords))
+			fmt.Printf("drafts     %s\n", countsLine(st.Drafts))
 			return nil
 		}),
 	}
