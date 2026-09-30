@@ -169,7 +169,7 @@ func TestRedditOAuth(t *testing.T) {
 	if rec.Code != 303 || rec.Header().Get("Location") != "/?v=setup&connected=reddit" || gotCode != "the-code" {
 		t.Fatalf("callback %d %s", rec.Code, rec.Header().Get("Location"))
 	}
-	accs, _ := st.Accounts("reddit")
+	accs, _ := st.Accounts(0, "reddit")
 	if len(accs) != 1 || accs[0].Handle != "spez" || !strings.Contains(string(accs[0].Credentials), `"refresh_token":"refresh"`) {
 		t.Fatalf("saved %+v", accs)
 	}

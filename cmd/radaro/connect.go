@@ -125,11 +125,11 @@ func (a *app) saveAccount(platform, handle string, creds any) error {
 		return err
 	}
 	defer st.Close()
-	acc, err := st.SaveAccount(platform, handle, creds)
+	acc, err := st.SaveAccount(0, platform, handle, creds)
 	if err != nil {
 		return err
 	}
-	_ = st.LogActivity("account.connected", 0, platform+" "+handle)
+	_ = st.LogActivity(0, "account.connected", 0, platform+" "+handle)
 	if a.jsonFlag {
 		return printJSON(acc)
 	}
@@ -239,7 +239,7 @@ func (a *app) accountsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "accounts", Short: "List connected publishing accounts", Args: cobra.NoArgs,
 		RunE: a.withStore(func(st *store.Store, _ []string) error {
-			accs, err := st.Accounts("")
+			accs, err := st.Accounts(0, "")
 			if err != nil {
 				return err
 			}
@@ -264,14 +264,14 @@ func (a *app) accountsCmd() *cobra.Command {
 			if err != nil {
 				return errors.New("account id must be a number")
 			}
-			ok, err := st.DeleteAccount(id)
+			ok, err := st.DeleteAccount(0, id)
 			if err != nil {
 				return err
 			}
 			if !ok {
 				return fmt.Errorf("account %d does not exist", id)
 			}
-			_ = st.LogActivity("account.removed", 0, "account "+args[0])
+			_ = st.LogActivity(0, "account.removed", 0, "account "+args[0])
 			fmt.Printf("✓ removed account %d\n", id)
 			return nil
 		}),

@@ -38,7 +38,7 @@ func TestMigrationStepsRunOnceAndKeepData(t *testing.T) {
 	if v := userVersion(t, st); v != latest {
 		t.Fatalf("fresh database version = %d, want %d", v, latest)
 	}
-	if _, err := st.CreateProject("Acme"); err != nil {
+	if _, err := st.CreateProject(0, "Acme"); err != nil {
 		t.Fatal(err)
 	}
 	st.Close()
@@ -57,7 +57,7 @@ func TestMigrationStepsRunOnceAndKeepData(t *testing.T) {
 		if v := userVersion(t, st); v != latest+1 {
 			t.Fatalf("version = %d, want %d", v, latest+1)
 		}
-		ps, err := st.Projects()
+		ps, err := st.Projects(0)
 		if err != nil || len(ps) != 2 {
 			t.Fatalf("projects after migration = %v, %v", ps, err)
 		}
@@ -109,15 +109,15 @@ func TestRebuildTableKeepsRowsReferencesAndCounter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := st.SaveAccount("devto", "alice", map[string]string{"api_key": "k"})
+	a, err := st.SaveAccount(0, "devto", "alice", map[string]string{"api_key": "k"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	gone, err := st.SaveAccount("devto", "bob", map[string]string{"api_key": "k"})
+	gone, err := st.SaveAccount(0, "devto", "bob", map[string]string{"api_key": "k"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.DeleteAccount(gone.ID); err != nil {
+	if _, err := st.DeleteAccount(0, gone.ID); err != nil {
 		t.Fatal(err)
 	}
 	d, err := st.CreateDraft(NewDraft{Platform: "devto", AccountID: a.ID, Kind: "post", Title: "t", Body: "b"})
@@ -130,14 +130,15 @@ func TestRebuildTableKeepsRowsReferencesAndCounter(t *testing.T) {
 	withMigrations(t, migration{latestVersion() + 1, func(tx *sql.Tx) error {
 		return rebuildTable(tx, "accounts", `
 			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id     INTEGER REFERENCES users(id) ON DELETE CASCADE,
 			platform    TEXT NOT NULL,
 			handle      TEXT NOT NULL,
 			credentials TEXT NOT NULL,
 			created_at  TEXT NOT NULL,
 			updated_at  TEXT NOT NULL,
-			UNIQUE (platform, handle),
+			UNIQUE (user_id, platform, handle),
 			CHECK (platform != '')`,
-			`id, platform, handle, credentials, created_at, updated_at`,
+			`id, user_id, platform, handle, credentials, created_at, updated_at`,
 			`CREATE INDEX idx_accounts_platform ON accounts(platform)`)
 	}})
 	st, err = Open(path)
@@ -145,11 +146,11 @@ func TestRebuildTableKeepsRowsReferencesAndCounter(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	got, err := st.Draft(d.ID)
+	got, err := st.Draft(0, d.ID)
 	if err != nil || got == nil || got.AccountID == nil || *got.AccountID != a.ID {
 		t.Fatalf("draft lost its account after the rebuild: %+v, %v", got, err)
 	}
-	next, err := st.SaveAccount("devto", "carol", map[string]string{"api_key": "k"})
+	next, err := st.SaveAccount(0, "devto", "carol", map[string]string{"api_key": "k"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,10 +158,10 @@ func TestRebuildTableKeepsRowsReferencesAndCounter(t *testing.T) {
 		t.Fatalf("new account reused id %d (deleted id was %d)", next.ID, gone.ID)
 	}
 	// The draft's reference still points at the rebuilt table.
-	if _, err := st.DeleteAccount(a.ID); err != nil {
+	if _, err := st.DeleteAccount(0, a.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := st.Draft(d.ID); got.AccountID != nil {
+	if got, _ := st.Draft(0, d.ID); got.AccountID != nil {
 		t.Fatal("ON DELETE SET NULL no longer fires after the rebuild")
 	}
 }
@@ -198,7 +199,7 @@ func TestReadsDoNotWaitForTheWriter(t *testing.T) {
 	}
 	done := make(chan []Project, 1)
 	go func() {
-		ps, _ := st.Projects()
+		ps, _ := st.Projects(0)
 		done <- ps
 	}()
 	select {
@@ -229,7 +230,7 @@ func TestBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if _, err := st.CreateProject("Acme"); err != nil {
+	if _, err := st.CreateProject(0, "Acme"); err != nil {
 		t.Fatal(err)
 	}
 	dest := filepath.Join(dir, "backup.db")

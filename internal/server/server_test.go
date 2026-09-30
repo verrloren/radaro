@@ -52,6 +52,10 @@ func newTestServer(t *testing.T, cfg *config.Config) (*Server, *store.Store) {
 	m := &model.Mention{Source: "hackernews", Query: "go", Text: "great", URL: model.Str("https://1"),
 		CreatedAt: time.Now(), Sentiment: model.Positive}
 	m.Normalize()
+	// Unowned data: the first user to register takes it over.
+	if err := st.SaveTracking(0, "go", []string{"hackernews"}, 0); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := st.Upsert([]*model.Mention{m}, true); err != nil {
 		t.Fatal(err)
 	}

@@ -23,19 +23,19 @@ func (a *app) statusCmd() *cobra.Command {
 		Short: "What is set up: database, sources, accounts, keywords and drafts",
 		Args:  cobra.NoArgs,
 		RunE: a.withStore(func(st *store.Store, _ []string) error {
-			accounts, err := st.Accounts("")
+			accounts, err := st.Accounts(0, "")
 			if err != nil {
 				return err
 			}
-			queries, err := st.Queries(0)
+			queries, err := st.Queries(0, 0)
 			if err != nil {
 				return err
 			}
-			drafts, err := st.DraftCounts()
+			drafts, err := st.DraftCounts(0)
 			if err != nil {
 				return err
 			}
-			srcOpts, err := pipeline.SourceOptions(a.cfg, st)
+			srcOpts, err := pipeline.SourceOptions(a.cfg, st, 0)
 			if err != nil {
 				return err
 			}

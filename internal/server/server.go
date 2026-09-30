@@ -109,8 +109,8 @@ type sourceInfo struct {
 	Configured bool `json:"configured"`
 }
 
-func (s *Server) meta(w http.ResponseWriter, _ *http.Request) {
-	opts, err := pipeline.SourceOptions(s.cfg, s.store)
+func (s *Server) meta(w http.ResponseWriter, r *http.Request) {
+	opts, err := pipeline.SourceOptions(s.cfg, s.store, userID(r))
 	if err != nil {
 		internalError(w, err)
 		return
@@ -128,10 +128,10 @@ func (s *Server) meta(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) queries(w http.ResponseWriter, r *http.Request) {
 	pid, ok := optionalID(w, r.URL.Query().Get("p"))
-	if !ok {
+	if !ok || (pid != 0 && !s.ownProject(w, r, pid)) {
 		return
 	}
-	qs, err := s.store.Queries(pid)
+	qs, err := s.store.Queries(userID(r), pid)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -143,6 +143,15 @@ func (s *Server) tracking(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if q == "" {
 		writeError(w, http.StatusUnprocessableEntity, "q is required")
+		return
+	}
+	owns, err := s.store.OwnsQuery(userID(r), q)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	if !owns {
+		writeError(w, http.StatusNotFound, "keyword is not tracked")
 		return
 	}
 	t, err := s.store.Tracking(q)
@@ -157,8 +166,8 @@ func (s *Server) tracking(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, t)
 }
 
-func (s *Server) projects(w http.ResponseWriter, _ *http.Request) {
-	ps, err := s.store.Projects()
+func (s *Server) projects(w http.ResponseWriter, r *http.Request) {
+	ps, err := s.store.Projects(userID(r))
 	if err != nil {
 		internalError(w, err)
 		return
@@ -171,7 +180,7 @@ func (s *Server) project(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	p, err := s.store.Project(id)
+	p, err := s.store.Project(userID(r), id)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -190,7 +199,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	p, err := s.store.CreateProject(body.Name)
+	p, err := s.store.CreateProject(userID(r), body.Name)
 	if err != nil {
 		storeError(w, err, http.StatusUnprocessableEntity)
 		return
@@ -203,7 +212,7 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	deleted, err := s.store.DeleteProject(id)
+	deleted, err := s.store.DeleteProject(userID(r), id)
 	if err != nil {
 		storeError(w, err, http.StatusInternalServerError)
 		return
@@ -226,12 +235,12 @@ func (s *Server) addProjectQuery(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	added, err := s.store.AddQueryToProject(id, body.Query)
+	added, err := s.store.AddQueryToProject(userID(r), id, body.Query)
 	if err != nil {
 		storeError(w, err, http.StatusUnprocessableEntity)
 		return
 	}
-	p, err := s.store.Project(id)
+	p, err := s.store.Project(userID(r), id)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -250,7 +259,7 @@ func (s *Server) removeProjectQuery(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	removed, err := s.store.RemoveQueryFromProject(id, body.Query)
+	removed, err := s.store.RemoveQueryFromProject(userID(r), id, body.Query)
 	if err != nil {
 		storeError(w, err, http.StatusInternalServerError)
 		return
@@ -259,7 +268,7 @@ func (s *Server) removeProjectQuery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "keyword is not in this project")
 		return
 	}
-	p, err := s.store.Project(id)
+	p, err := s.store.Project(userID(r), id)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -277,18 +286,10 @@ func (s *Server) scope(w http.ResponseWriter, r *http.Request) (store.Scope, boo
 		writeError(w, http.StatusUnprocessableEntity, "choose a keyword or a project, not both")
 		return store.Scope{}, false
 	}
-	if pid != 0 {
-		p, err := s.store.Project(pid)
-		if err != nil {
-			internalError(w, err)
-			return store.Scope{}, false
-		}
-		if p == nil {
-			writeError(w, http.StatusNotFound, "project not found")
-			return store.Scope{}, false
-		}
+	if pid != 0 && !s.ownProject(w, r, pid) {
+		return store.Scope{}, false
 	}
-	return store.Scope{Query: q, ProjectID: pid}, true
+	return store.Scope{UserID: userID(r), Query: q, ProjectID: pid}, true
 }
 
 func (s *Server) summary(w http.ResponseWriter, r *http.Request) {
@@ -424,13 +425,7 @@ func (s *Server) track(w http.ResponseWriter, r *http.Request) {
 	var pid int64
 	if body.ProjectID != nil {
 		pid = *body.ProjectID
-		p, err := s.store.Project(pid)
-		if err != nil {
-			internalError(w, err)
-			return
-		}
-		if p == nil {
-			writeError(w, http.StatusNotFound, "project not found")
+		if !s.ownProject(w, r, pid) {
 			return
 		}
 	}
@@ -439,13 +434,28 @@ func (s *Server) track(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 	res, err := pipeline.New(&cfg, s.store).Track(ctx, query, pipeline.Options{
-		Backfill: body.Mode == "backfill", Pages: body.Pages, ProjectID: pid,
+		Backfill: body.Mode == "backfill", Pages: body.Pages, UserID: userID(r), ProjectID: pid,
 	})
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
+}
+
+// ownProject answers 404 unless the project belongs to the signed-in user,
+// so ids of other users' projects cannot be probed.
+func (s *Server) ownProject(w http.ResponseWriter, r *http.Request, id int64) bool {
+	p, err := s.store.Project(userID(r), id)
+	if err != nil {
+		internalError(w, err)
+		return false
+	}
+	if p == nil {
+		writeError(w, http.StatusNotFound, "project not found")
+		return false
+	}
+	return true
 }
 
 // spa serves the built dashboard, falling back to index.html for client routes.

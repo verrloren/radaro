@@ -42,7 +42,7 @@ func (a *app) demoCmd() *cobra.Command {
 			if _, err := st.Upsert(mentions, false); err != nil {
 				return err
 			}
-			if err := st.SaveTracking(sampledata.Query, []string{"hackernews", "reddit", "mastodon", "bluesky"}, 0); err != nil {
+			if err := st.SaveTracking(0, sampledata.Query, []string{"hackernews", "reddit", "mastodon", "bluesky"}, 0); err != nil {
 				return err
 			}
 			if err := reclusterAndPrint(st, sampledata.Query); err != nil {

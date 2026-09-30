@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -19,7 +18,8 @@ import (
 	"github.com/verrloren/radaro/internal/model"
 )
 
-// DefaultProjectID is the protected project every keyword starts in.
+// DefaultProjectID is the Default project the instance had before users;
+// the first user to register takes it over.
 const DefaultProjectID int64 = 1
 
 // timeLayout is fixed-width UTC so stored timestamps sort lexically.
@@ -243,7 +243,9 @@ func (s *Store) Check(ctx context.Context) error {
 }
 
 // Scope selects mentions by keyword, by project, or (both empty) everything.
+// With a UserID, only keywords in that user's projects are visible.
 type Scope struct {
+	UserID    int64
 	Query     string
 	ProjectID int64
 }
@@ -252,13 +254,25 @@ func (sc Scope) where(prefix string) (string, []any, error) {
 	if sc.Query != "" && sc.ProjectID != 0 {
 		return "", nil, errors.New("query and project are mutually exclusive")
 	}
+	var conds []string
+	var args []any
 	if sc.Query != "" {
-		return " " + prefix + " query = ?", []any{sc.Query}, nil
+		conds, args = append(conds, "query = ?"), append(args, sc.Query)
 	}
-	if sc.ProjectID != 0 {
-		return " " + prefix + " query IN (SELECT query FROM project_queries WHERE project_id = ?)", []any{sc.ProjectID}, nil
+	if sc.ProjectID != 0 || sc.UserID != 0 {
+		sub := `SELECT pq.query FROM project_queries AS pq JOIN projects AS p ON p.id = pq.project_id WHERE 1=1`
+		if sc.ProjectID != 0 {
+			sub, args = sub+" AND pq.project_id = ?", append(args, sc.ProjectID)
+		}
+		if sc.UserID != 0 {
+			sub, args = sub+" AND p.user_id = ?", append(args, sc.UserID)
+		}
+		conds = append(conds, "query IN ("+sub+")")
 	}
-	return "", nil, nil
+	if len(conds) == 0 {
+		return "", nil, nil
+	}
+	return " " + prefix + " " + strings.Join(conds, " AND "), args, nil
 }
 
 // Upsert inserts or updates mentions and returns how many were new.
@@ -283,18 +297,13 @@ func (s *Store) Upsert(mentions []*model.Mention, updateTheme bool) (int, error)
 			observed[m.Query] = append(observed[m.Query], m.Source)
 		}
 	}
+	// Grouping into projects is SaveTracking's job; this only makes sure
+	// every stored mention has its keyword row.
 	for _, q := range order {
 		srcs, _ := json.Marshal(observed[q])
-		res, err := tx.Exec(`INSERT OR IGNORE INTO tracked_queries (query, sources, created_at, updated_at, last_scanned_at)
-			VALUES (?, ?, ?, ?, ?)`, q, string(srcs), now, now, now)
-		if err != nil {
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO tracked_queries (query, sources, created_at, updated_at, last_scanned_at)
+			VALUES (?, ?, ?, ?, ?)`, q, string(srcs), now, now, now); err != nil {
 			return 0, err
-		}
-		if n, _ := res.RowsAffected(); n > 0 {
-			if _, err := tx.Exec(`INSERT OR IGNORE INTO project_queries (project_id, query, added_at) VALUES (?, ?, ?)`,
-				DefaultProjectID, q, now); err != nil {
-				return 0, err
-			}
 		}
 	}
 
@@ -331,9 +340,10 @@ func (s *Store) Upsert(mentions []*model.Mention, updateTheme bool) (int, error)
 	return newCount, tx.Commit()
 }
 
-// SaveTracking persists a keyword and its sources even when a scan finds nothing.
-// A keyword with no project joins the given one, or Default.
-func (s *Store) SaveTracking(query string, sources []string, projectID int64) error {
+// SaveTracking persists a keyword and its sources even when a scan finds
+// nothing, and files it under the user's project: the given one, or Default
+// when the keyword is in none of theirs yet.
+func (s *Store) SaveTracking(userID int64, query string, sources []string, projectID int64) error {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return errors.New("query must not be empty")
@@ -355,11 +365,7 @@ func (s *Store) SaveTracking(query string, sources []string, projectID int64) er
 	}
 	defer tx.Rollback()
 	if projectID != 0 {
-		var one int
-		if err := tx.QueryRow(`SELECT 1 FROM projects WHERE id = ?`, projectID).Scan(&one); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return fmt.Errorf("unknown project: %d", projectID)
-			}
+		if _, err := ownedProject(tx, userID, projectID); err != nil {
 			return err
 		}
 	}
@@ -371,10 +377,14 @@ func (s *Store) SaveTracking(query string, sources []string, projectID int64) er
 	}
 	target := projectID
 	if target == 0 {
+		where, args := owner("p.user_id", userID)
 		var one int
-		err := tx.QueryRow(`SELECT 1 FROM project_queries WHERE query = ? LIMIT 1`, query).Scan(&one)
+		err := tx.QueryRow(`SELECT 1 FROM project_queries AS pq JOIN projects AS p ON p.id = pq.project_id
+			WHERE pq.query = ? AND `+where+` LIMIT 1`, append([]any{query}, args...)...).Scan(&one)
 		if errors.Is(err, sql.ErrNoRows) {
-			target = DefaultProjectID
+			if target, err = defaultProject(tx, userID); err != nil {
+				return err
+			}
 		} else if err != nil {
 			return err
 		}
@@ -482,16 +492,35 @@ func (s *Store) Mentions(f MentionFilter) ([]*model.Mention, error) {
 	return out, rows.Err()
 }
 
-// Queries lists tracked keywords (optionally within a project), most recently active first.
-func (s *Store) Queries(projectID int64) ([]string, error) {
+// Queries lists the user's tracked keywords (optionally within one project),
+// most recently active first.
+func (s *Store) Queries(userID, projectID int64) ([]string, error) {
 	q := `SELECT t.query FROM tracked_queries AS t LEFT JOIN mentions AS m ON m.query = t.query`
 	var args []any
-	if projectID != 0 {
-		q += ` JOIN project_queries AS pq ON pq.query = t.query AND pq.project_id = ?`
-		args = append(args, projectID)
+	if userID != 0 || projectID != 0 {
+		q += ` WHERE t.query IN (SELECT pq.query FROM project_queries AS pq JOIN projects AS p ON p.id = pq.project_id WHERE 1=1`
+		if projectID != 0 {
+			q, args = q+` AND pq.project_id = ?`, append(args, projectID)
+		}
+		if userID != 0 {
+			q, args = q+` AND p.user_id = ?`, append(args, userID)
+		}
+		q += `)`
 	}
 	q += ` GROUP BY t.query ORDER BY COALESCE(MAX(m.created_at), t.updated_at) DESC, t.query COLLATE NOCASE`
 	return s.strings(q, args...)
+}
+
+// OwnsQuery reports whether the keyword is in one of the user's projects.
+func (s *Store) OwnsQuery(userID int64, query string) (bool, error) {
+	where, args := owner("p.user_id", userID)
+	var one int
+	err := s.rdb.QueryRow(`SELECT 1 FROM project_queries AS pq JOIN projects AS p ON p.id = pq.project_id
+		WHERE pq.query = ? AND `+where+` LIMIT 1`, append([]any{query}, args...)...).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // Tracking is a tracked keyword's saved configuration.

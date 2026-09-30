@@ -93,6 +93,7 @@ interface Mention {
 interface Project {
   id: number;
   name: string;
+  is_default: boolean;        // every user has one; it cannot be deleted
   created_at: string;
   updated_at: string;
   query_count: number;
@@ -182,13 +183,19 @@ interface Account { id: number; platform: string; handle: string; created_at: st
 
 ## Endpoints
 
+Every user sees only their own projects, keywords, accounts, drafts and
+activity. Mentions belong to keywords, so a user sees the mentions of the
+keywords in their projects; two users tracking the same keyword share the
+scanned data. A resource of another user answers `404`, exactly like one that
+does not exist.
+
 | Method | Path | Body / query | Response |
 |---|---|---|---|
 | GET | `/health` | — | `{"status":"ok","database":"ok"}` |
 | GET | `/api/meta` | — | `{"version": string, "sources": SourceInfo[], "default_sources": string[]}` |
 | GET | `/api/queries` | `?p=<project id>` optional | `string[]` — tracked keywords, most recently active first |
 | GET | `/api/tracking` | `?q=<keyword>` | `Tracking` (404 if unknown) |
-| GET | `/api/projects` | — | `Project[]` (Default project, id 1, first) |
+| GET | `/api/projects` | — | the user's `Project[]`, Default first |
 | GET | `/api/projects/{id}` | — | `Project` with `queries` |
 | POST | `/api/projects` | `{"name": string}` | `201 Project`; `409` duplicate |
 | DELETE | `/api/projects/{id}` | — | `{"deleted": true}`; `409` for the Default project |

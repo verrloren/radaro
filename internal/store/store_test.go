@@ -88,37 +88,37 @@ func TestSummaryAndTimeseries(t *testing.T) {
 
 func TestProjects(t *testing.T) {
 	st := openTest(t)
-	if err := st.SaveTracking("go", []string{"HackerNews", "hackernews", "bluesky"}, 0); err != nil {
+	if err := st.SaveTracking(0, "go", []string{"HackerNews", "hackernews", "bluesky"}, 0); err != nil {
 		t.Fatal(err)
 	}
 	tr, err := st.Tracking("go")
 	if err != nil || len(tr.Sources) != 2 {
 		t.Fatalf("tracking %+v, %v", tr, err)
 	}
-	p, err := st.CreateProject("  Linux   stuff ")
+	p, err := st.CreateProject(0, "  Linux   stuff ")
 	if err != nil || p.Name != "Linux stuff" {
 		t.Fatalf("create %+v, %v", p, err)
 	}
-	if _, err := st.CreateProject("linux STUFF"); !errors.Is(err, ErrConflict) {
+	if _, err := st.CreateProject(0, "linux STUFF"); !errors.Is(err, ErrConflict) {
 		t.Fatalf("duplicate name error = %v", err)
 	}
-	if added, err := st.AddQueryToProject(p.ID, "go"); err != nil || !added {
+	if added, err := st.AddQueryToProject(0, p.ID, "go"); err != nil || !added {
 		t.Fatalf("add = %v, %v", added, err)
 	}
-	if _, err := st.AddQueryToProject(p.ID, "unknown"); !errors.Is(err, ErrNotFound) {
+	if _, err := st.AddQueryToProject(0, p.ID, "unknown"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown keyword error = %v", err)
 	}
-	qs, _ := st.Queries(p.ID)
+	qs, _ := st.Queries(0, p.ID)
 	if len(qs) != 1 || qs[0] != "go" {
 		t.Fatalf("project queries %v", qs)
 	}
-	if _, err := st.DeleteProject(DefaultProjectID); !errors.Is(err, ErrConflict) {
+	if _, err := st.DeleteProject(0, DefaultProjectID); !errors.Is(err, ErrConflict) {
 		t.Fatal("Default project must be protected")
 	}
-	if _, err := st.RemoveQueryFromProject(DefaultProjectID, "go"); !errors.Is(err, ErrConflict) {
+	if _, err := st.RemoveQueryFromProject(0, DefaultProjectID, "go"); !errors.Is(err, ErrConflict) {
 		t.Fatal("keywords cannot leave Default")
 	}
-	if ok, err := st.DeleteProject(p.ID); err != nil || !ok {
+	if ok, err := st.DeleteProject(0, p.ID); err != nil || !ok {
 		t.Fatalf("delete = %v, %v", ok, err)
 	}
 	if tr, _ := st.Tracking("go"); tr == nil {

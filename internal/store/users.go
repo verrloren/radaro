@@ -86,6 +86,26 @@ func (s *Store) CreateUser(email, passwordHash string, open bool) (*User, error)
 		return nil, err
 	}
 	id, _ := res.LastInsertId()
+	if users == 0 {
+		// The first user owns what the instance held before accounts existed.
+		for _, table := range []string{"projects", "accounts", "drafts", "activity"} {
+			if _, err := tx.Exec(`UPDATE `+table+` SET user_id = ? WHERE user_id IS NULL`, id); err != nil {
+				return nil, err
+			}
+		}
+	}
+	var hasDefault int
+	err = tx.QueryRow(`SELECT 1 FROM projects WHERE user_id = ? AND is_default = 1`, id).Scan(&hasDefault)
+	if errors.Is(err, sql.ErrNoRows) {
+		name := "Default"
+		if err := tx.QueryRow(`SELECT 1 FROM projects WHERE user_id = ? AND name = ?`, id, name).Scan(&hasDefault); err == nil {
+			name = "Default project"
+		}
+		_, err = tx.Exec(`INSERT INTO projects (user_id, name, is_default, created_at, updated_at) VALUES (?, ?, 1, ?, ?)`, id, name, now, now)
+	}
+	if err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}

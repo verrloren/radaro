@@ -17,7 +17,7 @@ func (a *app) projectCmd() *cobra.Command {
 		&cobra.Command{
 			Use: "list", Short: "List projects and their sizes", Args: cobra.NoArgs,
 			RunE: a.withStore(func(st *store.Store, _ []string) error {
-				ps, err := st.Projects()
+				ps, err := st.Projects(0)
 				if err != nil {
 					return err
 				}
@@ -34,7 +34,7 @@ func (a *app) projectCmd() *cobra.Command {
 		&cobra.Command{
 			Use: "create <name>", Short: "Create an empty project", Args: cobra.ExactArgs(1),
 			RunE: a.withStore(func(st *store.Store, args []string) error {
-				p, err := st.CreateProject(args[0])
+				p, err := st.CreateProject(0, args[0])
 				if err != nil {
 					return err
 				}
@@ -52,7 +52,7 @@ func (a *app) projectCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				added, err := st.AddQueryToProject(id, args[1])
+				added, err := st.AddQueryToProject(0, id, args[1])
 				if err != nil {
 					return err
 				}
@@ -71,7 +71,7 @@ func (a *app) projectCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				removed, err := st.RemoveQueryFromProject(id, args[1])
+				removed, err := st.RemoveQueryFromProject(0, id, args[1])
 				if err != nil {
 					return err
 				}
@@ -90,7 +90,7 @@ func (a *app) projectCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				p, err := st.Project(id)
+				p, err := st.Project(0, id)
 				if err != nil {
 					return err
 				}
@@ -128,7 +128,7 @@ func (a *app) projectDeleteCmd() *cobra.Command {
 				fmt.Printf("Would delete project %d; tracked keywords and mentions stay intact. Add --yes to apply.\n", id)
 				return nil
 			}
-			deleted, err := st.DeleteProject(id)
+			deleted, err := st.DeleteProject(0, id)
 			if err != nil {
 				return err
 			}

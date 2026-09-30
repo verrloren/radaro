@@ -133,7 +133,7 @@ func (a *app) reportCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			queries, err := st.Queries(0)
+			queries, err := st.Queries(0, 0)
 			if err != nil {
 				return err
 			}
@@ -167,7 +167,7 @@ func (a *app) sourcesCmd() *cobra.Command {
 		Short: "List available mention sources",
 		Args:  cobra.NoArgs,
 		RunE: a.withStore(func(st *store.Store, _ []string) error {
-			srcOpts, err := pipeline.SourceOptions(a.cfg, st)
+			srcOpts, err := pipeline.SourceOptions(a.cfg, st, 0)
 			if err != nil {
 				return err
 			}
@@ -217,7 +217,7 @@ func (a *app) exportCmd() *cobra.Command {
 			q := ""
 			if len(args) == 1 {
 				q = strings.TrimSpace(args[0])
-				queries, err := st.Queries(0)
+				queries, err := st.Queries(0, 0)
 				if err != nil {
 					return err
 				}

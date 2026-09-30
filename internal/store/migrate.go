@@ -21,6 +21,7 @@ var migrations = []migration{
 	// Versions 1–3 only ever added tables, so one idempotent step covers them.
 	{3, baseline},
 	{4, usersAndSessions},
+	{5, ownership},
 }
 
 func baseline(tx *sql.Tx) error {
@@ -58,6 +59,41 @@ CREATE TABLE instance (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );`)
+	return err
+}
+
+// ownership gives projects, accounts, drafts and the activity log an owner.
+// Existing rows stay unowned (NULL) until the first user registers and
+// takes them over.
+func ownership(tx *sql.Tx) error {
+	if err := rebuildTable(tx, "projects", `
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    name       TEXT NOT NULL COLLATE NOCASE,
+    is_default INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (user_id, name)`,
+		`id, NULL, name, id = 1, created_at, updated_at`); err != nil {
+		return err
+	}
+	if err := rebuildTable(tx, "accounts", `
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    platform    TEXT NOT NULL,
+    handle      TEXT NOT NULL,
+    credentials TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    UNIQUE (user_id, platform, handle)`,
+		`id, NULL, platform, handle, credentials, created_at, updated_at`); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`
+ALTER TABLE drafts ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
+ALTER TABLE activity ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
+CREATE INDEX idx_drafts_user ON drafts(user_id, status, created_at);
+CREATE INDEX idx_activity_user ON activity(user_id, id);`)
 	return err
 }
 

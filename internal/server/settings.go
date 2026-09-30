@@ -143,7 +143,7 @@ func (s *Server) saveSourceSettings(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
-	_ = s.store.LogActivity("source.configured", 0, name)
+	_ = s.store.LogActivity(userID(r), "source.configured", 0, name)
 	s.writeSourceSettings(w, name)
 }
 
@@ -159,15 +159,15 @@ func (s *Server) deleteSourceSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if deleted {
-		_ = s.store.LogActivity("source.reset", 0, name)
+		_ = s.store.LogActivity(userID(r), "source.reset", 0, name)
 	}
 	s.writeSourceSettings(w, name)
 }
 
 // --- publishing accounts ------------------------------------------------------
 
-func (s *Server) accounts(w http.ResponseWriter, _ *http.Request) {
-	accs, err := s.store.Accounts("")
+func (s *Server) accounts(w http.ResponseWriter, r *http.Request) {
+	accs, err := s.store.Accounts(userID(r), "")
 	if err != nil {
 		internalError(w, err)
 		return
@@ -199,12 +199,12 @@ func (s *Server) connectAccount(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
-	acc, err := s.store.SaveAccount(body.Platform, handle, creds)
+	acc, err := s.store.SaveAccount(userID(r), body.Platform, handle, creds)
 	if err != nil {
 		internalError(w, err)
 		return
 	}
-	_ = s.store.LogActivity("account.connected", 0, body.Platform+" "+handle)
+	_ = s.store.LogActivity(userID(r), "account.connected", 0, body.Platform+" "+handle)
 	writeJSON(w, http.StatusCreated, acc)
 }
 
@@ -214,7 +214,7 @@ func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid account id")
 		return
 	}
-	deleted, err := s.store.DeleteAccount(id)
+	deleted, err := s.store.DeleteAccount(userID(r), id)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -223,7 +223,7 @@ func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "account not found")
 		return
 	}
-	_ = s.store.LogActivity("account.removed", 0, "account "+strconv.FormatInt(id, 10))
+	_ = s.store.LogActivity(userID(r), "account.removed", 0, "account "+strconv.FormatInt(id, 10))
 	writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 }
 
@@ -338,10 +338,10 @@ func (s *Server) redditCallback(w http.ResponseWriter, r *http.Request) {
 		back("connect_error", "Reddit sign-in failed: "+err.Error())
 		return
 	}
-	if _, err := s.store.SaveAccount("reddit", rd.Creds.Username, rd.Creds); err != nil {
+	if _, err := s.store.SaveAccount(p.userID, "reddit", rd.Creds.Username, rd.Creds); err != nil {
 		back("connect_error", "Could not save the account: "+err.Error())
 		return
 	}
-	_ = s.store.LogActivity("account.connected", 0, "reddit "+rd.Creds.Username)
+	_ = s.store.LogActivity(p.userID, "account.connected", 0, "reddit "+rd.Creds.Username)
 	back("connected", "reddit")
 }

@@ -37,7 +37,7 @@ func (a *app) opportunitiesCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			drafted, err := st.DraftedMentionIDs()
+			drafted, err := st.DraftedMentionIDs(0)
 			if err != nil {
 				return err
 			}
@@ -117,7 +117,7 @@ func (a *app) draftCmd() *cobra.Command {
 				return err
 			}
 			if n.AccountID != 0 {
-				if acc, err := st.Account(n.AccountID); err != nil {
+				if acc, err := st.Account(0, n.AccountID); err != nil {
 					return err
 				} else if acc == nil || acc.Platform != n.Platform {
 					return fmt.Errorf("account %d is not a %s account", n.AccountID, n.Platform)
@@ -127,7 +127,7 @@ func (a *app) draftCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			_ = st.LogActivity("draft.created", d.ID, draftSummary(d))
+			_ = st.LogActivity(0, "draft.created", d.ID, draftSummary(d))
 			if a.jsonFlag {
 				return printJSON(d)
 			}
@@ -151,7 +151,7 @@ func (a *app) draftCmd() *cobra.Command {
 	list := &cobra.Command{
 		Use: "list", Short: "List drafts, newest first", Args: cobra.NoArgs,
 		RunE: a.withStore(func(st *store.Store, _ []string) error {
-			ds, err := st.Drafts(status, limit)
+			ds, err := st.Drafts(0, status, limit)
 			if err != nil {
 				return err
 			}
@@ -212,14 +212,14 @@ func (a *app) draftCmd() *cobra.Command {
 			if flags.Changed("community") {
 				e.Community = &edit.community
 			}
-			updated, err := st.EditDraft(d.ID, e)
+			updated, err := st.EditDraft(0, d.ID, e)
 			if err != nil {
 				return err
 			}
 			if err := validateDraft(updated); err != nil {
 				return fmt.Errorf("saved, but the draft is not publishable yet: %w", err)
 			}
-			_ = st.LogActivity("draft.edited", d.ID, draftSummary(updated))
+			_ = st.LogActivity(0, "draft.edited", d.ID, draftSummary(updated))
 			if a.jsonFlag {
 				return printJSON(updated)
 			}
@@ -238,11 +238,11 @@ func (a *app) draftCmd() *cobra.Command {
 			if err := validateDraft(d); err != nil {
 				return err
 			}
-			d, err := st.ApproveDraft(d.ID)
+			d, err := st.ApproveDraft(0, d.ID)
 			if err != nil {
 				return err
 			}
-			_ = st.LogActivity("draft.approved", d.ID, draftSummary(d))
+			_ = st.LogActivity(0, "draft.approved", d.ID, draftSummary(d))
 			if a.jsonFlag {
 				return printJSON(d)
 			}
@@ -254,11 +254,11 @@ func (a *app) draftCmd() *cobra.Command {
 	skip := &cobra.Command{
 		Use: "skip <id>", Short: "Discard a draft", Args: cobra.ExactArgs(1),
 		RunE: a.withDraft(func(st *store.Store, d *store.Draft) error {
-			d, err := st.SkipDraft(d.ID)
+			d, err := st.SkipDraft(0, d.ID)
 			if err != nil {
 				return err
 			}
-			_ = st.LogActivity("draft.skipped", d.ID, draftSummary(d))
+			_ = st.LogActivity(0, "draft.skipped", d.ID, draftSummary(d))
 			fmt.Printf("✓ draft %d skipped\n", d.ID)
 			return nil
 		}),
@@ -288,7 +288,7 @@ func (a *app) publishCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if _, err := st.BeginPublish(d.ID); err != nil {
+			if _, err := st.BeginPublish(0, d.ID); err != nil {
 				return err
 			}
 			res, pubErr := pub.Publish(a.ctx(), postOf(d))
@@ -297,10 +297,10 @@ func (a *app) publishCmd() *cobra.Command {
 				return err
 			}
 			if pubErr != nil {
-				_ = st.LogActivity("draft.failed", d.ID, pubErr.Error())
+				_ = st.LogActivity(0, "draft.failed", d.ID, pubErr.Error())
 				return fmt.Errorf("publishing draft %d failed: %w", d.ID, pubErr)
 			}
-			_ = st.LogActivity("draft.published", d.ID, acc.Platform+" "+acc.Handle+" "+res.URL)
+			_ = st.LogActivity(0, "draft.published", d.ID, acc.Platform+" "+acc.Handle+" "+res.URL)
 			if a.jsonFlag {
 				return printJSON(d)
 			}
@@ -317,7 +317,7 @@ func (a *app) statsCmd() *cobra.Command {
 		Short: "Engagement of published drafts (refreshed from each platform)",
 		Args:  cobra.NoArgs,
 		RunE: a.withStore(func(st *store.Store, _ []string) error {
-			ds, err := st.Drafts(store.DraftPublished, 0)
+			ds, err := st.Drafts(0, store.DraftPublished, 0)
 			if err != nil {
 				return err
 			}
@@ -346,7 +346,7 @@ func (a *app) statsCmd() *cobra.Command {
 						return err
 					}
 				}
-				if ds, err = st.Drafts(store.DraftPublished, 0); err != nil {
+				if ds, err = st.Drafts(0, store.DraftPublished, 0); err != nil {
 					return err
 				}
 			}
@@ -375,7 +375,7 @@ func (a *app) activityCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "activity", Short: "What was drafted, approved and published, newest first", Args: cobra.NoArgs,
 		RunE: a.withStore(func(st *store.Store, _ []string) error {
-			acts, err := st.Activities(limit)
+			acts, err := st.Activities(0, limit)
 			if err != nil {
 				return err
 			}
@@ -404,7 +404,7 @@ func (a *app) withDraft(fn func(*store.Store, *store.Draft) error) func(*cobra.C
 		if err != nil || id < 1 {
 			return errors.New("draft id must be a positive number")
 		}
-		d, err := st.Draft(id)
+		d, err := st.Draft(0, id)
 		if err != nil {
 			return err
 		}
@@ -431,7 +431,7 @@ func validateDraft(d *store.Draft) error {
 // accountFor picks the draft's account, or the only one for its platform.
 func accountFor(st *store.Store, d *store.Draft) (*store.Account, error) {
 	if d.AccountID != nil {
-		acc, err := st.Account(*d.AccountID)
+		acc, err := st.Account(0, *d.AccountID)
 		if err != nil {
 			return nil, err
 		}
@@ -440,7 +440,7 @@ func accountFor(st *store.Store, d *store.Draft) (*store.Account, error) {
 		}
 		return acc, nil
 	}
-	accs, err := st.Accounts(d.Platform)
+	accs, err := st.Accounts(0, d.Platform)
 	if err != nil {
 		return nil, err
 	}
