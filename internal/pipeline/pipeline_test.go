@@ -180,7 +180,7 @@ func TestSourceOptionsUseConnectedAccounts(t *testing.T) {
 	}
 	defer st.Close()
 	cfg := &config.Config{SourceOptions: sources.Options{RedditAccessToken: "env-token", MastodonAccessToken: "env-masto"}}
-	o, err := SourceOptions(cfg, st, 0)
+	o, err := SourceOptions(cfg, st, 0, 0)
 	if err != nil || o.RedditAccessToken != "env-token" || o.MastodonAccessToken != "env-masto" {
 		t.Fatalf("environment fallback %+v %v", o, err)
 	}
@@ -190,7 +190,7 @@ func TestSourceOptionsUseConnectedAccounts(t *testing.T) {
 	if _, err := st.SaveAccount(0, "mastodon", "me@hachyderm.io", publish.MastodonCredentials{Instance: "https://hachyderm.io", AccessToken: "acct-tok"}); err != nil {
 		t.Fatal(err)
 	}
-	o, err = SourceOptions(cfg, st, 0)
+	o, err = SourceOptions(cfg, st, 0, 0)
 	if err != nil || o.RedditRefreshToken != "rt" || o.RedditClientID != "cid" || o.RedditAccessToken != "" ||
 		o.MastodonInstance != "https://hachyderm.io" || o.MastodonAccessToken != "acct-tok" {
 		t.Fatalf("account options %+v %v", o, err)

@@ -167,7 +167,7 @@ func (a *app) sourcesCmd() *cobra.Command {
 		Short: "List available mention sources",
 		Args:  cobra.NoArgs,
 		RunE: a.withStore(func(st *store.Store, _ []string) error {
-			srcOpts, err := pipeline.SourceOptions(a.cfg, st, 0)
+			srcOpts, err := pipeline.SourceOptions(a.cfg, st, 0, 0)
 			if err != nil {
 				return err
 			}

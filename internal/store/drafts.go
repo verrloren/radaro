@@ -138,6 +138,7 @@ const (
 // Draft is a post or reply written for one platform.
 type Draft struct {
 	ID          int64          `json:"id"`
+	ProjectID   *int64         `json:"project_id"`
 	Platform    string         `json:"platform"`
 	AccountID   *int64         `json:"account_id"`
 	Kind        string         `json:"kind"` // post | reply
@@ -159,20 +160,23 @@ type Draft struct {
 	PublishedAt *string        `json:"published_at"`
 }
 
-const draftColumns = `id, platform, account_id, kind, community, title, body, reply_to, query, mention_id, status,
+const draftColumns = `id, project_id, platform, account_id, kind, community, title, body, reply_to, query, mention_id, status,
 	remote_id, remote_url, error, metrics, metrics_at, created_at, updated_at, approved_at, published_at`
 
 func scanDraft(row interface{ Scan(...any) error }) (*Draft, error) {
 	var (
 		d                                    Draft
-		account                              sql.NullInt64
+		project, account                     sql.NullInt64
 		community, title, replyTo, query     sql.NullString
 		mention, remoteID, remoteURL, errMsg sql.NullString
 		metrics, metricsAt, approved, pub    sql.NullString
 	)
-	if err := row.Scan(&d.ID, &d.Platform, &account, &d.Kind, &community, &title, &d.Body, &replyTo, &query, &mention,
+	if err := row.Scan(&d.ID, &project, &d.Platform, &account, &d.Kind, &community, &title, &d.Body, &replyTo, &query, &mention,
 		&d.Status, &remoteID, &remoteURL, &errMsg, &metrics, &metricsAt, &d.CreatedAt, &d.UpdatedAt, &approved, &pub); err != nil {
 		return nil, err
+	}
+	if project.Valid {
+		d.ProjectID = &project.Int64
 	}
 	if account.Valid {
 		d.AccountID = &account.Int64
@@ -189,6 +193,7 @@ func scanDraft(row interface{ Scan(...any) error }) (*Draft, error) {
 // NewDraft is the input for CreateDraft.
 type NewDraft struct {
 	UserID    int64
+	ProjectID int64 // 0: the user's Default project
 	Platform  string
 	AccountID int64
 	Kind      string
@@ -211,6 +216,15 @@ func (s *Store) CreateDraft(n NewDraft) (*Draft, error) {
 	if n.Kind == "reply" && strings.TrimSpace(n.ReplyTo) == "" {
 		return nil, errors.New("a reply needs --reply-to <url>")
 	}
+	project := n.ProjectID
+	if project == 0 {
+		var err error
+		if project, err = s.DefaultProjectFor(n.UserID); err != nil {
+			return nil, err
+		}
+	} else if _, err := ownedProject(s.rdb, n.UserID, project); err != nil {
+		return nil, err
+	}
 	var account any
 	if n.AccountID != 0 {
 		a, err := s.Account(n.UserID, n.AccountID)
@@ -220,12 +234,15 @@ func (s *Store) CreateDraft(n NewDraft) (*Draft, error) {
 		if a == nil {
 			return nil, fmt.Errorf("%w: account %d", ErrNotFound, n.AccountID)
 		}
+		if a.Platform != n.Platform {
+			return nil, fmt.Errorf("account %d is not a %s account", n.AccountID, n.Platform)
+		}
 		account = n.AccountID
 	}
 	now := stamp(time.Now())
-	res, err := s.db.Exec(`INSERT INTO drafts (user_id, platform, account_id, kind, community, title, body, reply_to, query, mention_id, status, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		ownerValue(n.UserID), n.Platform, account, n.Kind, nullIfEmpty(n.Community), nullIfEmpty(n.Title), n.Body, nullIfEmpty(n.ReplyTo),
+	res, err := s.db.Exec(`INSERT INTO drafts (user_id, project_id, platform, account_id, kind, community, title, body, reply_to, query, mention_id, status, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		ownerValue(n.UserID), project, n.Platform, account, n.Kind, nullIfEmpty(n.Community), nullIfEmpty(n.Title), n.Body, nullIfEmpty(n.ReplyTo),
 		nullIfEmpty(n.Query), nullIfEmpty(n.MentionID), DraftPending, now, now)
 	if err != nil {
 		return nil, err

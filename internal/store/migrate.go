@@ -23,6 +23,7 @@ var migrations = []migration{
 	{4, usersAndSessions},
 	{5, ownership},
 	{6, projectKeywords},
+	{7, projectAccounts},
 }
 
 func baseline(tx *sql.Tx) error {
@@ -113,6 +114,30 @@ INSERT INTO project_keywords (project_id, query, added_at)
     SELECT project_id, query, added_at FROM project_queries ORDER BY added_at, query;
 DROP TABLE project_queries;
 CREATE INDEX idx_project_keywords_query ON project_keywords(query);`)
+	return err
+}
+
+// projectAccounts binds at most one account per platform to a project, and
+// gives drafts a project. Each Default project starts with its owner's first
+// account of every platform, so publishing keeps working after the upgrade.
+func projectAccounts(tx *sql.Tx) error {
+	now := stamp(time.Now())
+	_, err := tx.Exec(`
+CREATE TABLE project_accounts (
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    platform   TEXT NOT NULL,
+    account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    bound_at   TEXT NOT NULL,
+    PRIMARY KEY (project_id, platform)
+);
+CREATE INDEX idx_project_accounts_account ON project_accounts(account_id);
+INSERT INTO project_accounts (project_id, platform, account_id, bound_at)
+    SELECT p.id, a.platform, MIN(a.id), ?
+    FROM projects AS p JOIN accounts AS a ON a.user_id IS p.user_id
+    WHERE p.is_default = 1 GROUP BY p.id, a.platform;
+ALTER TABLE drafts ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL;
+UPDATE drafts SET project_id =
+    (SELECT p.id FROM projects AS p WHERE p.is_default = 1 AND p.user_id IS drafts.user_id);`, now)
 	return err
 }
 

@@ -35,7 +35,7 @@ func (a *app) statusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			srcOpts, err := pipeline.SourceOptions(a.cfg, st, 0)
+			srcOpts, err := pipeline.SourceOptions(a.cfg, st, 0, 0)
 			if err != nil {
 				return err
 			}

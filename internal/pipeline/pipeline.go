@@ -86,9 +86,10 @@ type sourceOutcome struct {
 
 // SourceOptions is the environment's source configuration with the settings
 // saved from the dashboard laid over it, and Reddit and Mastodon scanning with
-// the user's first connected account of that platform (user 0: anyone's). It
-// is read per scan, so changes made in the dashboard apply without a restart.
-func SourceOptions(cfg *config.Config, st *store.Store, userID int64) (sources.Options, error) {
+// the project's bound account, else the user's first connected account of
+// that platform (user 0: anyone's). It is read per scan, so changes made in
+// the dashboard apply without a restart.
+func SourceOptions(cfg *config.Config, st *store.Store, userID, projectID int64) (sources.Options, error) {
 	stored, err := st.SourceSettings()
 	if err != nil {
 		return sources.Options{}, err
@@ -97,6 +98,15 @@ func SourceOptions(cfg *config.Config, st *store.Store, userID int64) (sources.O
 	accs, err := st.Accounts(userID, "")
 	if err != nil {
 		return sources.Options{}, err
+	}
+	if projectID != 0 {
+		bound, err := st.ProjectBindings(userID, projectID)
+		if err != nil {
+			return sources.Options{}, err
+		}
+		for i := len(bound) - 1; i >= 0; i-- {
+			accs = append([]*store.Account{bound[i].Account}, accs...)
+		}
 	}
 	var haveReddit, haveMastodon bool
 	for _, a := range accs {
@@ -158,7 +168,7 @@ func (p *Pipeline) Track(ctx context.Context, query string, opts Options) (*Resu
 		return nil, err
 	}
 
-	srcOpts, err := SourceOptions(p.Config, p.Store, opts.UserID)
+	srcOpts, err := SourceOptions(p.Config, p.Store, opts.UserID, opts.ProjectID)
 	if err != nil {
 		return nil, err
 	}

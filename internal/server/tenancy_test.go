@@ -72,3 +72,70 @@ func TestUsersCannotReachEachOthersData(t *testing.T) {
 		t.Fatal("B's attempts changed A's accounts")
 	}
 }
+
+func TestProjectAccountBindings(t *testing.T) {
+	srv, _ := newTestServer(t, &config.Config{Sources: []string{"hackernews"}, Registration: "open"})
+	srv.connect = func(_ context.Context, platform string, in publish.ConnectInput) (string, any, error) {
+		return in.Handle, map[string]string{"k": in.Secret}, nil
+	}
+	h := signedIn(t, srv, "a@example.com")
+	other := signedIn(t, srv, "b@example.com")
+	id := func(body []byte) int64 {
+		var v struct{ ID int64 }
+		json.Unmarshal(body, &v)
+		return v.ID
+	}
+	p1 := id(do(h, "POST", "/api/projects", `{"name":"One"}`).Body.Bytes())
+	p2 := id(do(h, "POST", "/api/projects", `{"name":"Two"}`).Body.Bytes())
+	// Connecting with project_id binds right away.
+	rec := do(h, "POST", "/api/accounts", fmt.Sprintf(`{"platform":"mastodon","handle":"first","secret":"s1","project_id":%d}`, p1))
+	first := id(rec.Body.Bytes())
+	if rec.Code != 201 || first == 0 {
+		t.Fatalf("connect %d %s", rec.Code, rec.Body)
+	}
+	second := id(do(h, "POST", "/api/accounts", `{"platform":"mastodon","handle":"second","secret":"s2"}`).Body.Bytes())
+	rec = do(h, "PUT", fmt.Sprintf("/api/projects/%d/accounts/mastodon", p2), fmt.Sprintf(`{"account_id":%d}`, second))
+	if rec.Code != 200 {
+		t.Fatalf("bind %d %s", rec.Code, rec.Body)
+	}
+	var views []struct {
+		Platform struct{ Name string }
+		Account  *struct {
+			ID     int64
+			Handle string
+		}
+	}
+	for pid, want := range map[int64]string{p1: "first", p2: "second"} {
+		rec := do(h, "GET", fmt.Sprintf("/api/projects/%d/accounts", pid), "")
+		if err := json.Unmarshal(rec.Body.Bytes(), &views); err != nil || len(views) != 4 {
+			t.Fatalf("list %d %s", rec.Code, rec.Body)
+		}
+		for _, v := range views {
+			if v.Platform.Name == "mastodon" && (v.Account == nil || v.Account.Handle != want) {
+				t.Fatalf("project %d mastodon = %+v, want %s", pid, v.Account, want)
+			}
+			if v.Platform.Name == "reddit" && v.Account != nil {
+				t.Fatal("reddit bound without asking")
+			}
+		}
+		if strings.Contains(rec.Body.String(), "s1") || strings.Contains(rec.Body.String(), "credentials") {
+			t.Fatalf("credentials leaked: %s", rec.Body)
+		}
+	}
+	if rec := do(h, "PUT", fmt.Sprintf("/api/projects/%d/accounts/devto", p1), fmt.Sprintf(`{"account_id":%d}`, first)); rec.Code != 422 {
+		t.Fatalf("wrong platform %d", rec.Code)
+	}
+	// B can neither see nor change A's bindings, nor bind A's account.
+	for _, c := range []struct{ method, path, body string }{
+		{"GET", fmt.Sprintf("/api/projects/%d/accounts", p1), ""},
+		{"PUT", fmt.Sprintf("/api/projects/%d/accounts/mastodon", p1), fmt.Sprintf(`{"account_id":%d}`, first)},
+		{"DELETE", fmt.Sprintf("/api/projects/%d/accounts/mastodon", p1), ""},
+	} {
+		if rec := do(other, c.method, c.path, c.body); rec.Code != 404 {
+			t.Errorf("B %s %s → %d", c.method, c.path, rec.Code)
+		}
+	}
+	if rec := do(h, "DELETE", fmt.Sprintf("/api/projects/%d/accounts/mastodon", p1), ""); rec.Code != 200 || strings.Contains(rec.Body.String(), `"first"`) {
+		t.Fatalf("unbind %d %s", rec.Code, rec.Body)
+	}
+}

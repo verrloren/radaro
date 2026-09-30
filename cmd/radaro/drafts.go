@@ -430,27 +430,11 @@ func validateDraft(d *store.Draft) error {
 
 // accountFor picks the draft's account, or the only one for its platform.
 func accountFor(st *store.Store, d *store.Draft) (*store.Account, error) {
-	if d.AccountID != nil {
-		acc, err := st.Account(0, *d.AccountID)
-		if err != nil {
-			return nil, err
-		}
-		if acc == nil {
-			return nil, fmt.Errorf("account %d no longer exists", *d.AccountID)
-		}
-		return acc, nil
-	}
-	accs, err := st.Accounts(0, d.Platform)
-	if err != nil {
-		return nil, err
-	}
-	switch len(accs) {
-	case 0:
+	acc, err := st.PublishAccount(0, d)
+	if errors.Is(err, store.ErrNotFound) && d.AccountID == nil {
 		return nil, fmt.Errorf("no %s account connected; run radaro connect %s", d.Platform, d.Platform)
-	case 1:
-		return accs[0], nil
 	}
-	return nil, fmt.Errorf("several %s accounts are connected; create the draft with --account", d.Platform)
+	return acc, err
 }
 
 func mentionByID(st *store.Store, id string) (*model.Mention, error) {

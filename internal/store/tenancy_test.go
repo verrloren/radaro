@@ -239,3 +239,103 @@ func TestKeywordAndProjectLimits(t *testing.T) {
 		t.Fatalf("over the project limit: %v", err)
 	}
 }
+
+func TestUpgradeBindsExistingAccountsToDefault(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "radaro.db")
+	saved := migrations
+	migrations = saved[:len(saved)-1] // the schema just before project accounts
+	st, err := Open(path)
+	if err != nil {
+		migrations = saved
+		t.Fatal(err)
+	}
+	acc, _ := st.SaveAccount(0, "devto", "me", map[string]string{"k": "v"})
+	st.SaveAccount(0, "devto", "second", map[string]string{"k": "v"})
+	// Today's CreateDraft writes columns the old schema lacks.
+	res, err := st.db.Exec(`INSERT INTO drafts (platform, kind, body, status, created_at, updated_at)
+		VALUES ('devto', 'post', 'b', 'draft', 'x', 'x')`)
+	st.Close()
+	migrations = saved
+	if err != nil {
+		t.Fatal(err)
+	}
+	draftID, _ := res.LastInsertId()
+	st, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	bs, err := st.ProjectBindings(0, DefaultProjectID)
+	if err != nil || len(bs) != 1 || bs[0].Account.ID != acc.ID {
+		t.Fatalf("bindings after upgrade = %+v, %v", bs, err)
+	}
+	got, _ := st.Draft(0, draftID)
+	if got.ProjectID == nil || *got.ProjectID != DefaultProjectID {
+		t.Fatalf("draft project after upgrade = %v", got.ProjectID)
+	}
+}
+
+func TestProjectAccounts(t *testing.T) {
+	st := openTest(t)
+	u, _ := st.CreateUser("a@example.com", "h", true)
+	other, _ := st.CreateUser("b@example.com", "h", true)
+	p1, _ := st.CreateProject(u.ID, "One")
+	p2, _ := st.CreateProject(u.ID, "Two")
+	r1, _ := st.SaveAccount(u.ID, "reddit", "first", map[string]string{"k": "1"})
+	r2, _ := st.SaveAccount(u.ID, "reddit", "second", map[string]string{"k": "2"})
+	foreign, _ := st.SaveAccount(other.ID, "reddit", "theirs", map[string]string{"k": "3"})
+
+	if _, err := st.BindAccount(u.ID, p1.ID, r1.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.BindAccount(u.ID, p2.ID, r2.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.BindAccount(u.ID, p1.ID, foreign.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("bound another user's account: %v", err)
+	}
+	if _, err := st.BindAccount(other.ID, p1.ID, foreign.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("bound into another user's project: %v", err)
+	}
+	// Drafts publish with their project's account.
+	for _, c := range []struct {
+		project *Project
+		want    int64
+	}{{p1, r1.ID}, {p2, r2.ID}} {
+		d, err := st.CreateDraft(NewDraft{UserID: u.ID, ProjectID: c.project.ID, Platform: "reddit", Kind: "post", Title: "t", Body: "b"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		acc, err := st.PublishAccount(u.ID, d)
+		if err != nil || acc.ID != c.want {
+			t.Fatalf("project %s publishes as %+v, %v; want account %d", c.project.Name, acc, err, c.want)
+		}
+	}
+	// Rebinding replaces; one account per platform per project.
+	if _, err := st.BindAccount(u.ID, p1.ID, r2.ID); err != nil {
+		t.Fatal(err)
+	}
+	if bs, _ := st.ProjectBindings(u.ID, p1.ID); len(bs) != 1 || bs[0].Account.ID != r2.ID {
+		t.Fatalf("bindings = %+v", bs)
+	}
+	// Without a binding and with two accounts, the draft must say which.
+	def, _ := st.DefaultProjectFor(u.ID)
+	d, _ := st.CreateDraft(NewDraft{UserID: u.ID, Platform: "reddit", Kind: "post", Title: "t", Body: "b"})
+	if d.ProjectID == nil || *d.ProjectID != def {
+		t.Fatalf("draft without a project landed in %v, want Default %d", d.ProjectID, def)
+	}
+	if _, err := st.PublishAccount(u.ID, d); !errors.Is(err, ErrConflict) {
+		t.Fatalf("ambiguous account: %v", err)
+	}
+	if _, err := st.CreateDraft(NewDraft{UserID: u.ID, ProjectID: p1.ID, Platform: "devto", AccountID: r1.ID, Kind: "post", Body: "b"}); err == nil {
+		t.Fatal("a reddit account was accepted for a devto draft")
+	}
+	if ok, _ := st.UnbindAccount(u.ID, p1.ID, "reddit"); !ok {
+		t.Fatal("unbind failed")
+	}
+	// Deleting an account removes its bindings.
+	st.DeleteAccount(u.ID, r2.ID)
+	if bs, _ := st.ProjectBindings(u.ID, p2.ID); len(bs) != 0 {
+		t.Fatalf("binding survived its account: %+v", bs)
+	}
+}

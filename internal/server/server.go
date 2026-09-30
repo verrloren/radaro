@@ -82,6 +82,9 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/projects/{id}/keywords", s.keywords)
 			r.Post("/projects/{id}/keywords", s.addKeywords)
 			r.Delete("/projects/{id}/keywords/{kid}", s.removeKeyword)
+			r.Get("/projects/{id}/accounts", s.projectAccounts)
+			r.Put("/projects/{id}/accounts/{platform}", s.bindAccount)
+			r.Delete("/projects/{id}/accounts/{platform}", s.unbindAccount)
 			r.Get("/summary", s.summary)
 			r.Get("/mentions", s.mentions)
 			r.Post("/track", s.track)
@@ -113,7 +116,7 @@ type sourceInfo struct {
 }
 
 func (s *Server) meta(w http.ResponseWriter, r *http.Request) {
-	opts, err := pipeline.SourceOptions(s.cfg, s.store, userID(r))
+	opts, err := pipeline.SourceOptions(s.cfg, s.store, userID(r), 0)
 	if err != nil {
 		internalError(w, err)
 		return

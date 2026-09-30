@@ -111,6 +111,11 @@ interface Keyword {
   mention_count: number;
 }
 
+interface ProjectAccount {
+  platform: Platform;
+  account: Account | null;    // the account this project publishes and scans with
+}
+
 interface SourceState {
   source: string;
   newest_at: string | null;
@@ -193,6 +198,12 @@ interface Account { id: number; platform: string; handle: string; created_at: st
 
 ## Endpoints
 
+A project has at most one account per platform. Drafts belong to a project
+(the user's Default when none is given) and publish with the account the draft
+names, else the project's account, else the user's only account on that
+platform. Scans of a project's keyword use the project's Reddit and Mastodon
+accounts first.
+
 Every user sees only their own projects, keywords, accounts, drafts and
 activity. Mentions belong to keywords, so a user sees the mentions of the
 keywords in their projects; two users tracking the same keyword share the
@@ -213,6 +224,9 @@ does not exist.
 | GET | `/api/projects/{id}/keywords` | — | `Keyword[]`, oldest first |
 | POST | `/api/projects/{id}/keywords` | `{"query"?: string, "queries"?: string[], "sources"?: string[]}` | `201` (`200` when nothing was new) `{"added": number, "keywords": Keyword[]}`. Keywords already in the project, in any letter case, are skipped. New keywords scan `sources`, default the instance's `RADARO_SOURCES`. `409` beyond 500 keywords per project |
 | DELETE | `/api/projects/{id}/keywords/{kid}` | — | `{"deleted": true}`; the keyword's mentions stay |
+| GET | `/api/projects/{id}/accounts` | — | `ProjectAccount[]`, one per publishing platform |
+| PUT | `/api/projects/{id}/accounts/{platform}` | `{"account_id": number}` | `ProjectAccount[]`; replaces the project's account for that platform; `404` unknown account, `422` account of another platform |
+| DELETE | `/api/projects/{id}/accounts/{platform}` | — | `ProjectAccount[]` |
 | GET | `/api/summary` | `?q=` or `?p=` (mutually exclusive; neither = everything) | `{"summary": Summary, "timeseries": TimeseriesPoint[], "net": number, "themes": Theme[]}` |
 | GET | `/api/mentions` | `?q=` or `?p=`, `&source=`, `&sentiment=`, `&limit=` (1–1000, default 200) | `Mention[]`, newest first |
 | POST | `/api/track` | `{"query": string, "sources": string[], "mode": "incremental" \| "backfill", "pages": number, "project_id"?: number}` | `TrackResult` (may take several seconds) |
@@ -220,9 +234,9 @@ does not exist.
 | PUT | `/api/settings/sources/{name}` | `{"values": Record<string, string>}` | admin only (`403` otherwise). `SourceSettings`; a blank secret keeps the saved one, all blank removes the saved settings; `422` unknown field; `404` source without settings |
 | DELETE | `/api/settings/sources/{name}` | — | admin only. `SourceSettings` after falling back to the environment |
 | GET | `/api/accounts` | — | `{"platforms": Platform[], "accounts": Account[]}` |
-| POST | `/api/accounts` | `{"platform": "bluesky" \| "mastodon" \| "devto", "handle"?: string, "instance"?: string, "secret": string}` | `201 Account` once the platform accepts the key; `422` with the platform's refusal |
+| POST | `/api/accounts` | `{"platform": "bluesky" \| "mastodon" \| "devto", "handle"?: string, "instance"?: string, "secret": string, "project_id"?: number}` | `201 Account` once the platform accepts the key, bound to `project_id` when given; `422` with the platform's refusal |
 | DELETE | `/api/accounts/{id}` | — | `{"deleted": true}`; drafts keep their text |
-| POST | `/api/accounts/reddit/authorize` | `{"client_id": string, "client_secret"?: string}` | `{"authorize_url": string, "redirect_uri": string}` — open `authorize_url`; the state is single use and expires in 10 minutes |
+| POST | `/api/accounts/reddit/authorize` | `{"client_id": string, "client_secret"?: string, "project_id"?: number}` | `{"authorize_url": string, "redirect_uri": string}` — open `authorize_url`; the state is single use and expires in 10 minutes |
 | GET | `/oauth/reddit/callback` | Reddit's `?state=&code=` | `303` to `/?v=setup&connected=reddit`, or `&connect_error=<message>` |
 
 `net` is `(positive − negative) / total`, in `[-1, 1]`.
