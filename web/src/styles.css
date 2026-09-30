@@ -2424,10 +2424,7 @@ fieldset:disabled .tile {
   display: grid;
   place-items: center;
   padding: 40px 24px;
-  background:
-    radial-gradient(120% 80% at 0% 0%, rgb(138 108 255 / 0.1), transparent 60%),
-    radial-gradient(90% 70% at 100% 100%, rgb(255 61 139 / 0.07), transparent 60%),
-    var(--bg);
+  background: var(--bg);
 }
 
 .auth-card {
@@ -2439,7 +2436,6 @@ fieldset:disabled .tile {
   border-radius: 30px;
   background: var(--card);
   border: 1px solid var(--line);
-  box-shadow: 0 40px 80px -40px rgb(138 108 255 / 0.35);
   animation: rise 260ms var(--ease) both;
 }
 
@@ -2731,7 +2727,6 @@ a.auth-back:hover {
     padding: 0;
     border: 0;
     border-radius: 0;
-    box-shadow: none;
   }
 
   .auth-art {
