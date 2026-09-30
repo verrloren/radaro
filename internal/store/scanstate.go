@@ -41,7 +41,7 @@ func scanState(row interface{ Scan(...any) error }) (SourceState, error) {
 
 // SourceState returns the state for one keyword/source pair (zero value if none).
 func (s *Store) SourceState(query, source string) (SourceState, error) {
-	st, err := scanState(s.db.QueryRow(`SELECT `+stateColumns+` FROM source_scan_state WHERE query = ? AND source = ?`, query, source))
+	st, err := scanState(s.rdb.QueryRow(`SELECT `+stateColumns+` FROM source_scan_state WHERE query = ? AND source = ?`, query, source))
 	if errors.Is(err, sql.ErrNoRows) {
 		return SourceState{Source: source}, nil
 	}
@@ -50,7 +50,7 @@ func (s *Store) SourceState(query, source string) (SourceState, error) {
 
 // SourceStates returns every source state for a keyword.
 func (s *Store) SourceStates(query string) ([]SourceState, error) {
-	rows, err := s.db.Query(`SELECT `+stateColumns+` FROM source_scan_state WHERE query = ? ORDER BY source`, query)
+	rows, err := s.rdb.Query(`SELECT `+stateColumns+` FROM source_scan_state WHERE query = ? ORDER BY source`, query)
 	if err != nil {
 		return nil, err
 	}

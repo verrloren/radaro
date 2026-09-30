@@ -111,7 +111,7 @@ export function SourceForm({ source, onDone }: { source: SourceSettings; onDone:
 }
 
 /** Connects a Bluesky, Mastodon or Dev.to account; the key is checked with the platform. */
-export function ConnectForm({ platform, onDone }: { platform: Platform; onDone: () => void }) {
+export function ConnectForm({ platform, projectId, onDone }: { platform: Platform; projectId?: number; onDone: () => void }) {
   const id = useId();
   const spec = FORMS[platform.name];
   const [values, setValues] = useState<Record<string, string>>({});
@@ -124,7 +124,13 @@ export function ConnectForm({ platform, onDone }: { platform: Platform; onDone: 
     setBusy(true);
     setError(null);
     try {
-      await api.connectAccount({ platform: platform.name, handle: values.handle, instance: values.instance, secret: values.secret ?? "" });
+      await api.connectAccount({
+        platform: platform.name,
+        handle: values.handle,
+        instance: values.instance,
+        secret: values.secret ?? "",
+        project_id: projectId,
+      });
       onDone();
     } catch (err) {
       setError(errorMessage(err));
@@ -163,7 +169,7 @@ export function ConnectForm({ platform, onDone }: { platform: Platform; onDone: 
 }
 
 /** Starts the Reddit OAuth sign-in; Reddit sends the browser back to Setup. */
-export function RedditForm() {
+export function RedditForm({ projectId }: { projectId?: number }) {
   const id = useId();
   const redirect = `${window.location.origin}/oauth/reddit/callback`;
   const [clientId, setClientId] = useState("");
@@ -177,7 +183,7 @@ export function RedditForm() {
     setBusy(true);
     setError(null);
     try {
-      const res = await api.redditAuthorize(clientId.trim(), secret.trim());
+      const res = await api.redditAuthorize(clientId.trim(), secret.trim(), projectId);
       window.location.assign(res.authorize_url);
     } catch (err) {
       setError(errorMessage(err));

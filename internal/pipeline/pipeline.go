@@ -52,7 +52,8 @@ type Result struct {
 type Options struct {
 	Backfill  bool
 	Pages     int   // 1–20, default 3
-	ProjectID int64 // 0 = keep existing grouping / Default
+	UserID    int64 // who scans: their projects and connected accounts; 0 = the server itself
+	ProjectID int64 // 0 = keep existing grouping / the user's Default
 }
 
 // Pipeline ties configuration, store and analyzers together.
@@ -85,17 +86,27 @@ type sourceOutcome struct {
 
 // SourceOptions is the environment's source configuration with the settings
 // saved from the dashboard laid over it, and Reddit and Mastodon scanning with
-// the first connected account of that platform. It is read per scan, so
-// changes made in the dashboard apply without a restart.
-func SourceOptions(cfg *config.Config, st *store.Store) (sources.Options, error) {
+// the project's bound account, else the user's first connected account of
+// that platform (user 0: anyone's). It is read per scan, so changes made in
+// the dashboard apply without a restart.
+func SourceOptions(cfg *config.Config, st *store.Store, userID, projectID int64) (sources.Options, error) {
 	stored, err := st.SourceSettings()
 	if err != nil {
 		return sources.Options{}, err
 	}
 	o := cfg.SourceOptions.Merge(stored)
-	accs, err := st.Accounts("")
+	accs, err := st.Accounts(userID, "")
 	if err != nil {
 		return sources.Options{}, err
+	}
+	if projectID != 0 {
+		bound, err := st.ProjectBindings(userID, projectID)
+		if err != nil {
+			return sources.Options{}, err
+		}
+		for i := len(bound) - 1; i >= 0; i-- {
+			accs = append([]*store.Account{bound[i].Account}, accs...)
+		}
 	}
 	var haveReddit, haveMastodon bool
 	for _, a := range accs {
@@ -153,11 +164,11 @@ func (p *Pipeline) Track(ctx context.Context, query string, opts Options) (*Resu
 		id := opts.ProjectID
 		res.ProjectID = &id
 	}
-	if err := p.Store.SaveTracking(query, names, opts.ProjectID); err != nil {
+	if err := p.Store.SaveTracking(opts.UserID, query, names, opts.ProjectID); err != nil {
 		return nil, err
 	}
 
-	srcOpts, err := SourceOptions(p.Config, p.Store)
+	srcOpts, err := SourceOptions(p.Config, p.Store, opts.UserID, opts.ProjectID)
 	if err != nil {
 		return nil, err
 	}

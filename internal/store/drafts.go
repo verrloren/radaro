@@ -20,24 +20,42 @@ type Account struct {
 	UpdatedAt   string          `json:"updated_at"`
 }
 
-// SaveAccount inserts or refreshes the account for (platform, handle).
-func (s *Store) SaveAccount(platform, handle string, credentials any) (*Account, error) {
+// SaveAccount inserts or refreshes the user's account for (platform, handle).
+func (s *Store) SaveAccount(userID int64, platform, handle string, credentials any) (*Account, error) {
 	creds, err := json.Marshal(credentials)
 	if err != nil {
 		return nil, err
 	}
 	now := stamp(time.Now())
-	if _, err := s.db.Exec(`INSERT INTO accounts (platform, handle, credentials, created_at, updated_at) VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT(platform, handle) DO UPDATE SET credentials = excluded.credentials, updated_at = excluded.updated_at`,
-		platform, handle, string(creds), now, now); err != nil {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	// Not ON CONFLICT: the unique key holds a NULL owner for user 0, and
+	// NULLs never conflict.
+	var id int64
+	err = tx.QueryRow(`SELECT id FROM accounts WHERE user_id IS ? AND platform = ? AND handle = ?`,
+		ownerValue(userID), platform, handle).Scan(&id)
+	switch {
+	case err == nil:
+		_, err = tx.Exec(`UPDATE accounts SET credentials = ?, updated_at = ? WHERE id = ?`, string(creds), now, id)
+	case errors.Is(err, sql.ErrNoRows):
+		var res sql.Result
+		res, err = tx.Exec(`INSERT INTO accounts (user_id, platform, handle, credentials, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+			ownerValue(userID), platform, handle, string(creds), now, now)
+		if err == nil {
+			id, _ = res.LastInsertId()
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	s.restrict()
-	var id int64
-	if err := s.db.QueryRow(`SELECT id FROM accounts WHERE platform = ? AND handle = ?`, platform, handle).Scan(&id); err != nil {
-		return nil, err
-	}
-	return s.Account(id)
+	return s.Account(userID, id)
 }
 
 // UpdateAccountCredentials replaces an account's stored credentials (e.g. a rotated refresh token).
@@ -62,24 +80,25 @@ func scanAccount(row interface{ Scan(...any) error }) (*Account, error) {
 	return &a, nil
 }
 
-// Account returns one account, or nil.
-func (s *Store) Account(id int64) (*Account, error) {
-	a, err := scanAccount(s.db.QueryRow(`SELECT `+accountColumns+` FROM accounts WHERE id = ?`, id))
+// Account returns one of the user's accounts, or nil.
+func (s *Store) Account(userID, id int64) (*Account, error) {
+	where, args := owner("user_id", userID)
+	a, err := scanAccount(s.rdb.QueryRow(`SELECT `+accountColumns+` FROM accounts WHERE id = ? AND `+where, append([]any{id}, args...)...))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	return a, err
 }
 
-// Accounts lists connected accounts, optionally for one platform.
-func (s *Store) Accounts(platform string) ([]*Account, error) {
-	q := `SELECT ` + accountColumns + ` FROM accounts`
-	var args []any
+// Accounts lists the user's connected accounts, optionally for one platform.
+func (s *Store) Accounts(userID int64, platform string) ([]*Account, error) {
+	where, args := owner("user_id", userID)
+	q := `SELECT ` + accountColumns + ` FROM accounts WHERE ` + where
 	if platform != "" {
-		q += ` WHERE platform = ?`
+		q += ` AND platform = ?`
 		args = append(args, platform)
 	}
-	rows, err := s.db.Query(q+` ORDER BY platform, id`, args...)
+	rows, err := s.rdb.Query(q+` ORDER BY platform, id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -95,9 +114,10 @@ func (s *Store) Accounts(platform string) ([]*Account, error) {
 	return out, rows.Err()
 }
 
-// DeleteAccount removes an account; its drafts keep their text.
-func (s *Store) DeleteAccount(id int64) (bool, error) {
-	res, err := s.db.Exec(`DELETE FROM accounts WHERE id = ?`, id)
+// DeleteAccount removes one of the user's accounts; its drafts keep their text.
+func (s *Store) DeleteAccount(userID, id int64) (bool, error) {
+	where, args := owner("user_id", userID)
+	res, err := s.db.Exec(`DELETE FROM accounts WHERE id = ? AND `+where, append([]any{id}, args...)...)
 	if err != nil {
 		return false, err
 	}
@@ -118,6 +138,7 @@ const (
 // Draft is a post or reply written for one platform.
 type Draft struct {
 	ID          int64          `json:"id"`
+	ProjectID   *int64         `json:"project_id"`
 	Platform    string         `json:"platform"`
 	AccountID   *int64         `json:"account_id"`
 	Kind        string         `json:"kind"` // post | reply
@@ -139,20 +160,23 @@ type Draft struct {
 	PublishedAt *string        `json:"published_at"`
 }
 
-const draftColumns = `id, platform, account_id, kind, community, title, body, reply_to, query, mention_id, status,
+const draftColumns = `id, project_id, platform, account_id, kind, community, title, body, reply_to, query, mention_id, status,
 	remote_id, remote_url, error, metrics, metrics_at, created_at, updated_at, approved_at, published_at`
 
 func scanDraft(row interface{ Scan(...any) error }) (*Draft, error) {
 	var (
 		d                                    Draft
-		account                              sql.NullInt64
+		project, account                     sql.NullInt64
 		community, title, replyTo, query     sql.NullString
 		mention, remoteID, remoteURL, errMsg sql.NullString
 		metrics, metricsAt, approved, pub    sql.NullString
 	)
-	if err := row.Scan(&d.ID, &d.Platform, &account, &d.Kind, &community, &title, &d.Body, &replyTo, &query, &mention,
+	if err := row.Scan(&d.ID, &project, &d.Platform, &account, &d.Kind, &community, &title, &d.Body, &replyTo, &query, &mention,
 		&d.Status, &remoteID, &remoteURL, &errMsg, &metrics, &metricsAt, &d.CreatedAt, &d.UpdatedAt, &approved, &pub); err != nil {
 		return nil, err
+	}
+	if project.Valid {
+		d.ProjectID = &project.Int64
 	}
 	if account.Valid {
 		d.AccountID = &account.Int64
@@ -168,6 +192,8 @@ func scanDraft(row interface{ Scan(...any) error }) (*Draft, error) {
 
 // NewDraft is the input for CreateDraft.
 type NewDraft struct {
+	UserID    int64
+	ProjectID int64 // 0: the user's Default project
 	Platform  string
 	AccountID int64
 	Kind      string
@@ -190,37 +216,57 @@ func (s *Store) CreateDraft(n NewDraft) (*Draft, error) {
 	if n.Kind == "reply" && strings.TrimSpace(n.ReplyTo) == "" {
 		return nil, errors.New("a reply needs --reply-to <url>")
 	}
+	project := n.ProjectID
+	if project == 0 {
+		var err error
+		if project, err = s.DefaultProjectFor(n.UserID); err != nil {
+			return nil, err
+		}
+	} else if _, err := ownedProject(s.rdb, n.UserID, project); err != nil {
+		return nil, err
+	}
 	var account any
 	if n.AccountID != 0 {
+		a, err := s.Account(n.UserID, n.AccountID)
+		if err != nil {
+			return nil, err
+		}
+		if a == nil {
+			return nil, fmt.Errorf("%w: account %d", ErrNotFound, n.AccountID)
+		}
+		if a.Platform != n.Platform {
+			return nil, fmt.Errorf("account %d is not a %s account", n.AccountID, n.Platform)
+		}
 		account = n.AccountID
 	}
 	now := stamp(time.Now())
-	res, err := s.db.Exec(`INSERT INTO drafts (platform, account_id, kind, community, title, body, reply_to, query, mention_id, status, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		n.Platform, account, n.Kind, nullIfEmpty(n.Community), nullIfEmpty(n.Title), n.Body, nullIfEmpty(n.ReplyTo),
+	res, err := s.db.Exec(`INSERT INTO drafts (user_id, project_id, platform, account_id, kind, community, title, body, reply_to, query, mention_id, status, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		ownerValue(n.UserID), project, n.Platform, account, n.Kind, nullIfEmpty(n.Community), nullIfEmpty(n.Title), n.Body, nullIfEmpty(n.ReplyTo),
 		nullIfEmpty(n.Query), nullIfEmpty(n.MentionID), DraftPending, now, now)
 	if err != nil {
 		return nil, err
 	}
 	id, _ := res.LastInsertId()
-	return s.Draft(id)
+	return s.Draft(n.UserID, id)
 }
 
-// Draft returns one draft, or nil.
-func (s *Store) Draft(id int64) (*Draft, error) {
-	d, err := scanDraft(s.db.QueryRow(`SELECT `+draftColumns+` FROM drafts WHERE id = ?`, id))
+// Draft returns one of the user's drafts, or nil.
+func (s *Store) Draft(userID, id int64) (*Draft, error) {
+	where, args := owner("user_id", userID)
+	d, err := scanDraft(s.rdb.QueryRow(`SELECT `+draftColumns+` FROM drafts WHERE id = ? AND `+where, append([]any{id}, args...)...))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	return d, err
 }
 
-// Drafts lists drafts newest first, optionally filtered by status.
-func (s *Store) Drafts(status string, limit int) ([]*Draft, error) {
-	q := `SELECT ` + draftColumns + ` FROM drafts`
-	var args []any
+// Drafts lists the user's drafts newest first, optionally filtered by status.
+func (s *Store) Drafts(userID int64, status string, limit int) ([]*Draft, error) {
+	where, args := owner("user_id", userID)
+	q := `SELECT ` + draftColumns + ` FROM drafts WHERE ` + where
 	if status != "" {
-		q += ` WHERE status = ?`
+		q += ` AND status = ?`
 		args = append(args, status)
 	}
 	q += ` ORDER BY id DESC`
@@ -228,7 +274,7 @@ func (s *Store) Drafts(status string, limit int) ([]*Draft, error) {
 		q += ` LIMIT ?`
 		args = append(args, limit)
 	}
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.rdb.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -252,8 +298,8 @@ type DraftEdit struct {
 }
 
 // EditDraft updates text and sends an approved or failed draft back to review.
-func (s *Store) EditDraft(id int64, e DraftEdit) (*Draft, error) {
-	d, err := s.Draft(id)
+func (s *Store) EditDraft(userID, id int64, e DraftEdit) (*Draft, error) {
+	d, err := s.Draft(userID, id)
 	if err != nil || d == nil {
 		return d, err
 	}
@@ -277,12 +323,12 @@ func (s *Store) EditDraft(id int64, e DraftEdit) (*Draft, error) {
 	if _, err := s.db.Exec(`UPDATE drafts SET `+strings.Join(sets, ", ")+` WHERE id = ?`, append(args, id)...); err != nil {
 		return nil, err
 	}
-	return s.Draft(id)
+	return s.Draft(userID, id)
 }
 
-// transition moves a draft from one of the allowed statuses to next.
-func (s *Store) transition(id int64, next string, from []string, extra string, args ...any) (*Draft, error) {
-	d, err := s.Draft(id)
+// transition moves one of the user's drafts from an allowed status to next.
+func (s *Store) transition(userID, id int64, next string, from []string, extra string, args ...any) (*Draft, error) {
+	d, err := s.Draft(userID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -301,31 +347,31 @@ func (s *Store) transition(id int64, next string, from []string, extra string, a
 	if n, _ := res.RowsAffected(); n == 0 {
 		return nil, fmt.Errorf("%w: draft %d changed concurrently", ErrConflict, id)
 	}
-	return s.Draft(id)
+	return s.Draft(userID, id)
 }
 
 // ApproveDraft marks a draft (or a failed one being retried) as approved for publishing.
-func (s *Store) ApproveDraft(id int64) (*Draft, error) {
-	return s.transition(id, DraftApproved, []string{DraftPending, DraftFailed}, `, approved_at = ?, error = NULL`, stamp(time.Now()))
+func (s *Store) ApproveDraft(userID, id int64) (*Draft, error) {
+	return s.transition(userID, id, DraftApproved, []string{DraftPending, DraftFailed}, `, approved_at = ?, error = NULL`, stamp(time.Now()))
 }
 
 // SkipDraft discards a draft that has not been published.
-func (s *Store) SkipDraft(id int64) (*Draft, error) {
-	return s.transition(id, DraftSkipped, []string{DraftPending, DraftApproved, DraftFailed}, ``)
+func (s *Store) SkipDraft(userID, id int64) (*Draft, error) {
+	return s.transition(userID, id, DraftSkipped, []string{DraftPending, DraftApproved, DraftFailed}, ``)
 }
 
 // BeginPublish claims an approved draft before any network call, so a crash
 // mid-publish leaves it visibly "publishing" instead of silently re-posting.
-func (s *Store) BeginPublish(id int64) (*Draft, error) {
-	return s.transition(id, DraftPublishing, []string{DraftApproved}, ``)
+func (s *Store) BeginPublish(userID, id int64) (*Draft, error) {
+	return s.transition(userID, id, DraftPublishing, []string{DraftApproved}, ``)
 }
 
-// FinishPublish records the outcome of a claimed publish.
+// FinishPublish records the outcome of a publish claimed with BeginPublish.
 func (s *Store) FinishPublish(id int64, remoteID, remoteURL string, publishErr error) (*Draft, error) {
 	if publishErr != nil {
-		return s.transition(id, DraftFailed, []string{DraftPublishing}, `, error = ?`, truncate(publishErr.Error(), 1000))
+		return s.transition(0, id, DraftFailed, []string{DraftPublishing}, `, error = ?`, truncate(publishErr.Error(), 1000))
 	}
-	return s.transition(id, DraftPublished, []string{DraftPublishing}, `, remote_id = ?, remote_url = ?, published_at = ?, error = NULL`,
+	return s.transition(0, id, DraftPublished, []string{DraftPublishing}, `, remote_id = ?, remote_url = ?, published_at = ?, error = NULL`,
 		remoteID, nullIfEmpty(remoteURL), stamp(time.Now()))
 }
 
@@ -348,19 +394,22 @@ type Activity struct {
 	Detail  string `json:"detail"`
 }
 
-// LogActivity appends to the action log. draftID 0 means none.
-func (s *Store) LogActivity(action string, draftID int64, detail string) error {
+// LogActivity appends to the user's action log. draftID 0 means none.
+func (s *Store) LogActivity(userID int64, action string, draftID int64, detail string) error {
 	var d any
 	if draftID != 0 {
 		d = draftID
 	}
-	_, err := s.db.Exec(`INSERT INTO activity (at, action, draft_id, detail) VALUES (?, ?, ?, ?)`, stamp(time.Now()), action, d, detail)
+	_, err := s.db.Exec(`INSERT INTO activity (user_id, at, action, draft_id, detail) VALUES (?, ?, ?, ?, ?)`,
+		ownerValue(userID), stamp(time.Now()), action, d, detail)
 	return err
 }
 
-// Activities returns the newest log entries first.
-func (s *Store) Activities(limit int) ([]Activity, error) {
-	rows, err := s.db.Query(`SELECT id, at, action, draft_id, detail FROM activity ORDER BY id DESC LIMIT ?`, limit)
+// Activities returns the user's newest log entries first.
+func (s *Store) Activities(userID int64, limit int) ([]Activity, error) {
+	where, args := owner("user_id", userID)
+	rows, err := s.rdb.Query(`SELECT id, at, action, draft_id, detail FROM activity WHERE `+where+` ORDER BY id DESC LIMIT ?`,
+		append(args, limit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -380,9 +429,11 @@ func (s *Store) Activities(limit int) ([]Activity, error) {
 	return out, rows.Err()
 }
 
-// DraftedMentionIDs returns mention IDs that already have a non-skipped draft.
-func (s *Store) DraftedMentionIDs() (map[string]bool, error) {
-	ids, err := s.strings(`SELECT DISTINCT mention_id FROM drafts WHERE mention_id IS NOT NULL AND status != ?`, DraftSkipped)
+// DraftedMentionIDs returns mention IDs the user already has a non-skipped draft for.
+func (s *Store) DraftedMentionIDs(userID int64) (map[string]bool, error) {
+	where, args := owner("user_id", userID)
+	ids, err := s.strings(`SELECT DISTINCT mention_id FROM drafts WHERE mention_id IS NOT NULL AND status != ? AND `+where,
+		append([]any{DraftSkipped}, args...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -393,8 +444,9 @@ func (s *Store) DraftedMentionIDs() (map[string]bool, error) {
 	return out, nil
 }
 
-// DraftCounts returns how many drafts are in each status.
-func (s *Store) DraftCounts() (map[string]int, error) {
+// DraftCounts returns how many of the user's drafts are in each status.
+func (s *Store) DraftCounts(userID int64) (map[string]int, error) {
+	where, args := owner("user_id", userID)
 	out := map[string]int{}
-	return out, s.counts(out, `SELECT status, COUNT(*) FROM drafts GROUP BY status`)
+	return out, s.counts(out, `SELECT status, COUNT(*) FROM drafts WHERE `+where+` GROUP BY status`, args...)
 }

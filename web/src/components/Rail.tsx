@@ -1,6 +1,6 @@
 import type { Selection } from "../App";
 import type { AsyncState } from "../hooks";
-import type { Meta, Project } from "../types";
+import type { Meta, Project, User } from "../types";
 import { fmtNum } from "../format";
 import { Select } from "./ui/Select";
 
@@ -18,9 +18,11 @@ interface Props {
   total: number | undefined;
   needSetup: number;
   meta: AsyncState<Meta>;
+  user: User;
+  onSignOut: () => void;
 }
 
-export function Rail({ projects, keywords, keywordsLoading, keywordsError, sel, onSelect, view, onView, total, needSetup, meta }: Props) {
+export function Rail({ projects, keywords, keywordsLoading, keywordsError, sel, onSelect, view, onView, total, needSetup, meta, user, onSignOut }: Props) {
   const kw = keywords ?? [];
   const kwOptions = sel.q && !kw.includes(sel.q) ? [sel.q, ...kw] : kw;
   const projectMissing = sel.p !== null && projects.data && !projects.data.some((p) => p.id === sel.p);
@@ -37,9 +39,14 @@ export function Rail({ projects, keywords, keywordsLoading, keywordsError, sel, 
             <i />
           </span>
         </div>
-        <span className={`server-pill${serverDown ? " is-down" : ""}`}>
-          <span className="dot" aria-hidden="true" />
-          {serverDown ? "offline" : "local"}
+        <span className="rail-top-end">
+          <span className={`server-pill${serverDown ? " is-down" : ""}`}>
+            <span className="dot" aria-hidden="true" />
+            {serverDown ? "offline" : "online"}
+          </span>
+          <button type="button" className="link-btn quiet rail-signout" onClick={onSignOut} title={`Signed in as ${user.email}`}>
+            Sign out
+          </button>
         </span>
       </div>
 
@@ -125,11 +132,17 @@ export function Rail({ projects, keywords, keywordsLoading, keywordsError, sel, 
       <div className="rail-foot">
         <span className="rail-status">
           <span className={`dot${serverDown ? " is-down" : ""}`} aria-hidden="true" />
-          {serverDown ? "Can't reach the local server" : "Local server running"}
+          {serverDown ? "Can't reach the server" : "Connected"}
+          {meta.data && <span className="muted small"> · v{meta.data.version.replace(/^v/, "")}</span>}
         </span>
-        <span className="muted small">
-          127.0.0.1 · your data stays on this machine
-          {meta.data && ` · v${meta.data.version.replace(/^v/, "")}`}
+        <span className="rail-user small">
+          <span className="email muted" title={user.email}>
+            {user.email}
+            {user.is_admin && " · admin"}
+          </span>
+          <button type="button" className="link-btn quiet" onClick={onSignOut}>
+            Sign out
+          </button>
         </span>
       </div>
     </aside>

@@ -7,9 +7,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -18,14 +18,15 @@ import (
 	"github.com/verrloren/radaro/internal/model"
 )
 
-// DefaultProjectID is the protected project every keyword starts in.
+// DefaultProjectID is the Default project the instance had before users;
+// the first user to register takes it over.
 const DefaultProjectID int64 = 1
 
 // timeLayout is fixed-width UTC so stored timestamps sort lexically.
 const timeLayout = "2006-01-02T15:04:05.000000Z"
 
-const schemaVersion = 3
-
+// schema is the version 3 layout. Later changes are migration steps, not
+// edits here.
 const schema = `
 CREATE TABLE IF NOT EXISTS mentions (
     id              TEXT NOT NULL,
@@ -162,7 +163,8 @@ CREATE TABLE IF NOT EXISTS source_settings (
 
 // Store wraps one SQLite database.
 type Store struct {
-	db   *sql.DB
+	db   *sql.DB // the single writer connection
+	rdb  *sql.DB // read-only pool: in WAL mode reads never wait for the writer
 	path string
 }
 
@@ -180,7 +182,7 @@ func Open(path string) (*Store, error) {
 				return nil, err
 			}
 		}
-		dsn = "file:" + path + "?_pragma=journal_mode(WAL)"
+		dsn = "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)"
 	}
 	sep := "?"
 	if strings.Contains(dsn, "?") {
@@ -191,41 +193,34 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	// One connection: SQLite serializes writers anyway, and a single
-	// connection keeps :memory: databases coherent.
+	// One writer: SQLite serializes writers anyway, and a single connection
+	// keeps :memory: databases coherent.
 	db.SetMaxOpenConns(1)
-	s := &Store{db: db, path: path}
+	s := &Store{db: db, rdb: db, path: path}
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, err
 	}
+	if path == ":memory:" {
+		return s, nil
+	}
+	rdb, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(30000)&_pragma=query_only(1)")
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	rdb.SetMaxOpenConns(max(4, runtime.NumCPU()))
+	s.rdb = rdb
 	return s, nil
 }
 
-func (s *Store) migrate() error {
-	var version int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
-		return err
-	}
-	if version >= schemaVersion {
-		return nil
-	}
-	now := stamp(time.Now())
-	if _, err := s.db.Exec(schema); err != nil {
-		return fmt.Errorf("apply schema: %w", err)
-	}
-	if _, err := s.db.Exec(
-		`INSERT OR IGNORE INTO projects (id, name, created_at, updated_at) VALUES (?, 'Default', ?, ?)`,
-		DefaultProjectID, now, now,
-	); err != nil {
-		return err
-	}
-	_, err := s.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion))
-	return err
-}
-
 // Close closes the database.
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	if s.rdb != s.db {
+		s.rdb.Close()
+	}
+	return s.db.Close()
+}
 
 // Path returns the database path.
 func (s *Store) Path() string { return s.path }
@@ -233,7 +228,7 @@ func (s *Store) Path() string { return s.path }
 // Check fails if SQLite cannot run a read and a small write transaction.
 func (s *Store) Check(ctx context.Context) error {
 	var one int
-	if err := s.db.QueryRowContext(ctx, "SELECT 1").Scan(&one); err != nil {
+	if err := s.rdb.QueryRowContext(ctx, "SELECT 1").Scan(&one); err != nil {
 		return err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -248,7 +243,9 @@ func (s *Store) Check(ctx context.Context) error {
 }
 
 // Scope selects mentions by keyword, by project, or (both empty) everything.
+// With a UserID, only keywords in that user's projects are visible.
 type Scope struct {
+	UserID    int64
 	Query     string
 	ProjectID int64
 }
@@ -257,13 +254,25 @@ func (sc Scope) where(prefix string) (string, []any, error) {
 	if sc.Query != "" && sc.ProjectID != 0 {
 		return "", nil, errors.New("query and project are mutually exclusive")
 	}
+	var conds []string
+	var args []any
 	if sc.Query != "" {
-		return " " + prefix + " query = ?", []any{sc.Query}, nil
+		conds, args = append(conds, "query = ?"), append(args, sc.Query)
 	}
-	if sc.ProjectID != 0 {
-		return " " + prefix + " query IN (SELECT query FROM project_queries WHERE project_id = ?)", []any{sc.ProjectID}, nil
+	if sc.ProjectID != 0 || sc.UserID != 0 {
+		sub := `SELECT pq.query FROM project_keywords AS pq JOIN projects AS p ON p.id = pq.project_id WHERE 1=1`
+		if sc.ProjectID != 0 {
+			sub, args = sub+" AND pq.project_id = ?", append(args, sc.ProjectID)
+		}
+		if sc.UserID != 0 {
+			sub, args = sub+" AND p.user_id = ?", append(args, sc.UserID)
+		}
+		conds = append(conds, "query IN ("+sub+")")
 	}
-	return "", nil, nil
+	if len(conds) == 0 {
+		return "", nil, nil
+	}
+	return " " + prefix + " " + strings.Join(conds, " AND "), args, nil
 }
 
 // Upsert inserts or updates mentions and returns how many were new.
@@ -288,18 +297,13 @@ func (s *Store) Upsert(mentions []*model.Mention, updateTheme bool) (int, error)
 			observed[m.Query] = append(observed[m.Query], m.Source)
 		}
 	}
+	// Grouping into projects is SaveTracking's job; this only makes sure
+	// every stored mention has its keyword row.
 	for _, q := range order {
 		srcs, _ := json.Marshal(observed[q])
-		res, err := tx.Exec(`INSERT OR IGNORE INTO tracked_queries (query, sources, created_at, updated_at, last_scanned_at)
-			VALUES (?, ?, ?, ?, ?)`, q, string(srcs), now, now, now)
-		if err != nil {
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO tracked_queries (query, sources, created_at, updated_at, last_scanned_at)
+			VALUES (?, ?, ?, ?, ?)`, q, string(srcs), now, now, now); err != nil {
 			return 0, err
-		}
-		if n, _ := res.RowsAffected(); n > 0 {
-			if _, err := tx.Exec(`INSERT OR IGNORE INTO project_queries (project_id, query, added_at) VALUES (?, ?, ?)`,
-				DefaultProjectID, q, now); err != nil {
-				return 0, err
-			}
 		}
 	}
 
@@ -336,20 +340,15 @@ func (s *Store) Upsert(mentions []*model.Mention, updateTheme bool) (int, error)
 	return newCount, tx.Commit()
 }
 
-// SaveTracking persists a keyword and its sources even when a scan finds nothing.
-// A keyword with no project joins the given one, or Default.
-func (s *Store) SaveTracking(query string, sources []string, projectID int64) error {
+// SaveTracking persists a keyword and its sources even when a scan finds
+// nothing, and files it under the user's project: the given one, or Default
+// when the keyword is in none of theirs yet.
+func (s *Store) SaveTracking(userID int64, query string, sources []string, projectID int64) error {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return errors.New("query must not be empty")
 	}
-	var normalized []string
-	for _, src := range sources {
-		src = strings.ToLower(strings.TrimSpace(src))
-		if src != "" && !containsStr(normalized, src) {
-			normalized = append(normalized, src)
-		}
-	}
+	normalized := normalizeSources(sources)
 	if len(normalized) == 0 {
 		return errors.New("at least one source must be configured")
 	}
@@ -360,11 +359,7 @@ func (s *Store) SaveTracking(query string, sources []string, projectID int64) er
 	}
 	defer tx.Rollback()
 	if projectID != 0 {
-		var one int
-		if err := tx.QueryRow(`SELECT 1 FROM projects WHERE id = ?`, projectID).Scan(&one); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return fmt.Errorf("unknown project: %d", projectID)
-			}
+		if _, err := ownedProject(tx, userID, projectID); err != nil {
 			return err
 		}
 	}
@@ -376,16 +371,20 @@ func (s *Store) SaveTracking(query string, sources []string, projectID int64) er
 	}
 	target := projectID
 	if target == 0 {
+		where, args := owner("p.user_id", userID)
 		var one int
-		err := tx.QueryRow(`SELECT 1 FROM project_queries WHERE query = ? LIMIT 1`, query).Scan(&one)
+		err := tx.QueryRow(`SELECT 1 FROM project_keywords AS pq JOIN projects AS p ON p.id = pq.project_id
+			WHERE pq.query = ? AND `+where+` LIMIT 1`, append([]any{query}, args...)...).Scan(&one)
 		if errors.Is(err, sql.ErrNoRows) {
-			target = DefaultProjectID
+			if target, err = defaultProject(tx, userID); err != nil {
+				return err
+			}
 		} else if err != nil {
 			return err
 		}
 	}
 	if target != 0 {
-		if _, err := tx.Exec(`INSERT OR IGNORE INTO project_queries (project_id, query, added_at) VALUES (?, ?, ?)`,
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO project_keywords (project_id, query, added_at) VALUES (?, ?, ?)`,
 			target, query, now); err != nil {
 			return err
 		}
@@ -402,7 +401,7 @@ func (s *Store) ExistingIDs(query string, ids []string) (map[string]bool, error)
 		for _, id := range chunk {
 			args = append(args, id)
 		}
-		rows, err := s.db.Query(`SELECT id FROM mentions WHERE query = ? AND id IN (`+placeholders(len(chunk))+`)`, args...)
+		rows, err := s.rdb.Query(`SELECT id FROM mentions WHERE query = ? AND id IN (`+placeholders(len(chunk))+`)`, args...)
 		if err != nil {
 			return nil, err
 		}
@@ -425,6 +424,7 @@ func (s *Store) ExistingIDs(query string, ids []string) (map[string]bool, error)
 // MentionFilter narrows Mentions. Limit 0 means no limit.
 type MentionFilter struct {
 	Scope
+	ID        string // one mention (it may appear under several keywords)
 	Source    string
 	Sentiment model.Sentiment
 	Limit     int
@@ -438,6 +438,10 @@ func (s *Store) Mentions(f MentionFilter) ([]*model.Mention, error) {
 	}
 	q := `SELECT id, source, query, author, title, text, url, created_at, score, sentiment, sentiment_score, theme
 		FROM mentions WHERE 1=1` + where
+	if f.ID != "" {
+		q += " AND id = ?"
+		args = append(args, f.ID)
+	}
 	if f.Source != "" {
 		q += " AND source = ?"
 		args = append(args, f.Source)
@@ -451,7 +455,7 @@ func (s *Store) Mentions(f MentionFilter) ([]*model.Mention, error) {
 		q += " LIMIT ?"
 		args = append(args, f.Limit)
 	}
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.rdb.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -487,16 +491,35 @@ func (s *Store) Mentions(f MentionFilter) ([]*model.Mention, error) {
 	return out, rows.Err()
 }
 
-// Queries lists tracked keywords (optionally within a project), most recently active first.
-func (s *Store) Queries(projectID int64) ([]string, error) {
+// Queries lists the user's tracked keywords (optionally within one project),
+// most recently active first.
+func (s *Store) Queries(userID, projectID int64) ([]string, error) {
 	q := `SELECT t.query FROM tracked_queries AS t LEFT JOIN mentions AS m ON m.query = t.query`
 	var args []any
-	if projectID != 0 {
-		q += ` JOIN project_queries AS pq ON pq.query = t.query AND pq.project_id = ?`
-		args = append(args, projectID)
+	if userID != 0 || projectID != 0 {
+		q += ` WHERE t.query IN (SELECT pq.query FROM project_keywords AS pq JOIN projects AS p ON p.id = pq.project_id WHERE 1=1`
+		if projectID != 0 {
+			q, args = q+` AND pq.project_id = ?`, append(args, projectID)
+		}
+		if userID != 0 {
+			q, args = q+` AND p.user_id = ?`, append(args, userID)
+		}
+		q += `)`
 	}
 	q += ` GROUP BY t.query ORDER BY COALESCE(MAX(m.created_at), t.updated_at) DESC, t.query COLLATE NOCASE`
 	return s.strings(q, args...)
+}
+
+// OwnsQuery reports whether the keyword is in one of the user's projects.
+func (s *Store) OwnsQuery(userID int64, query string) (bool, error) {
+	where, args := owner("p.user_id", userID)
+	var one int
+	err := s.rdb.QueryRow(`SELECT 1 FROM project_keywords AS pq JOIN projects AS p ON p.id = pq.project_id
+		WHERE pq.query = ? AND `+where+` LIMIT 1`, append([]any{query}, args...)...).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // Tracking is a tracked keyword's saved configuration.
@@ -516,7 +539,7 @@ func (s *Store) Tracking(query string) (*Tracking, error) {
 		srcs    string
 		scanned sql.NullString
 	)
-	err := s.db.QueryRow(`SELECT query, sources, created_at, updated_at, last_scanned_at FROM tracked_queries WHERE query = ?`, query).
+	err := s.rdb.QueryRow(`SELECT query, sources, created_at, updated_at, last_scanned_at FROM tracked_queries WHERE query = ?`, query).
 		Scan(&t.Query, &srcs, &t.CreatedAt, &t.UpdatedAt, &scanned)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -549,7 +572,7 @@ func (s *Store) Summary(sc Scope) (Summary, error) {
 		return Summary{}, err
 	}
 	out := Summary{BySentiment: map[string]int{}, BySource: map[string]int{}, ByDay: map[string]int{}}
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM mentions`+where, args...).Scan(&out.Total); err != nil {
+	if err := s.rdb.QueryRow(`SELECT COUNT(*) FROM mentions`+where, args...).Scan(&out.Total); err != nil {
 		return out, err
 	}
 	for _, g := range []struct {
@@ -582,7 +605,7 @@ func (s *Store) Timeseries(sc Scope) ([]DayPoint, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Query(`SELECT substr(created_at, 1, 10) AS d,
+	rows, err := s.rdb.Query(`SELECT substr(created_at, 1, 10) AS d,
 			COALESCE(SUM(sentiment = 'positive'), 0),
 			COALESCE(SUM(sentiment = 'neutral' OR sentiment IS NULL), 0),
 			COALESCE(SUM(sentiment = 'negative'), 0),
@@ -615,7 +638,7 @@ func (s *Store) Themes(sc Scope, limit int) ([]ThemeCount, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Query(`SELECT theme, COUNT(*) AS n FROM mentions WHERE theme IS NOT NULL AND theme != ''`+
+	rows, err := s.rdb.Query(`SELECT theme, COUNT(*) AS n FROM mentions WHERE theme IS NOT NULL AND theme != ''`+
 		where+` GROUP BY theme ORDER BY n DESC, theme LIMIT ?`, append(args, limit)...)
 	if err != nil {
 		return nil, err
@@ -645,7 +668,7 @@ func NetSentiment(sum Summary) float64 {
 // --- helpers ----------------------------------------------------------------
 
 func (s *Store) strings(q string, args ...any) ([]string, error) {
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.rdb.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -662,7 +685,7 @@ func (s *Store) strings(q string, args ...any) ([]string, error) {
 }
 
 func (s *Store) counts(dst map[string]int, q string, args ...any) error {
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.rdb.Query(q, args...)
 	if err != nil {
 		return err
 	}

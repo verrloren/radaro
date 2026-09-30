@@ -5,7 +5,7 @@ services:
       - path: .env
         required: false
     ports:
-      - "127.0.0.1:8042:8042" # loopback only: the dashboard has no authentication
+      - "127.0.0.1:8042:8042" # loopback only: put a TLS reverse proxy (e.g. Caddy) in front
     volumes:
       - radaro-data:/data
     restart: unless-stopped

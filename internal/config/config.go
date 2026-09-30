@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 
@@ -69,6 +70,12 @@ type Config struct {
 	AlertVolumeMultiplier float64
 	AlertSentimentDrop    float64
 	AlertCooldownHours    int
+
+	JWTSecret    string // blank: a random secret kept in the database
+	AccessTTL    time.Duration
+	RefreshTTL   time.Duration
+	Registration string // open | closed (the first user can always sign up)
+	CookieSecure bool   // force Secure cookies behind a proxy that hides HTTPS
 }
 
 // Load reads .env (without overriding the real environment) and validates.
@@ -119,6 +126,11 @@ func Load() (*Config, error) {
 		AlertVolumeMultiplier: e.float("RADARO_ALERT_VOLUME_MULTIPLIER", 0, 0),
 		AlertSentimentDrop:    e.float("RADARO_ALERT_SENTIMENT_DROP", 0, 0),
 		AlertCooldownHours:    e.int("RADARO_ALERT_COOLDOWN_HOURS", 24, 0),
+		JWTSecret:             e.str("RADARO_JWT_SECRET"),
+		AccessTTL:             e.duration("RADARO_ACCESS_TTL", 15*time.Minute, time.Minute),
+		RefreshTTL:            e.duration("RADARO_REFRESH_TTL", 30*24*time.Hour, time.Hour),
+		Registration:          e.choice("RADARO_REGISTRATION", "closed", "open", "closed"),
+		CookieSecure:          e.choice("RADARO_COOKIE_SECURE", "false", "true", "false") == "true",
 	}
 	if len(c.Sources) == 0 {
 		c.Sources = append([]string(nil), sources.DefaultSources...)
@@ -135,6 +147,9 @@ func Load() (*Config, error) {
 	}
 	if (c.SMTPUsername == "") != (c.SMTPPassword == "") {
 		errs = append(errs, errors.New("RADARO_SMTP_USERNAME and RADARO_SMTP_PASSWORD must be set together"))
+	}
+	if c.JWTSecret != "" && len(c.JWTSecret) < 32 {
+		errs = append(errs, errors.New("RADARO_JWT_SECRET must be at least 32 bytes (openssl rand -base64 48)"))
 	}
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
@@ -185,6 +200,22 @@ func (e *envReader) float(name string, def, minimum float64) float64 {
 	}
 	if v < minimum {
 		*e.errs = append(*e.errs, fmt.Errorf("%s must be at least %g (got %g)", name, minimum, v))
+	}
+	return v
+}
+
+func (e *envReader) duration(name string, def, minimum time.Duration) time.Duration {
+	raw := e.str(name)
+	if raw == "" {
+		return def
+	}
+	v, err := time.ParseDuration(raw)
+	if err != nil {
+		*e.errs = append(*e.errs, fmt.Errorf("%s must be a duration like 15m or 720h (got %q)", name, raw))
+		return def
+	}
+	if v < minimum {
+		*e.errs = append(*e.errs, fmt.Errorf("%s must be at least %s (got %s)", name, minimum, v))
 	}
 	return v
 }

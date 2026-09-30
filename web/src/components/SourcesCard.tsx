@@ -47,6 +47,8 @@ function describe(r: Row): string {
 }
 
 interface Props {
+  /** Source keys apply to the whole server, so only the admin edits them. */
+  isAdmin: boolean;
   meta: AsyncState<Meta>;
   settings: AsyncState<SourceSettings[]>;
   accounts: AsyncState<AccountsResponse>;
@@ -56,7 +58,7 @@ interface Props {
   onChanged: () => void;
 }
 
-export function SourcesCard({ meta, settings, accounts, notice, tracking, lookup, onChanged }: Props) {
+export function SourcesCard({ isAdmin, meta, settings, accounts, notice, tracking, lookup, onChanged }: Props) {
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [confirm, setConfirm] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -109,11 +111,11 @@ export function SourcesCard({ meta, settings, accounts, notice, tracking, lookup
         <h2 id="sources-h" className="card-title lg">
           Sources and accounts
         </h2>
-        <span className="muted small">{q ? `last scans for “${q}”` : "Scans run on this machine"}</span>
+        <span className="muted small">{q ? `last scans for “${q}”` : "Scans run on the server"}</span>
       </div>
       <p className="muted small">
-        Keys and accounts stay in the local database and apply right away; values in .env still work as a fallback. A Reddit or Mastodon account both scans and posts.
-        Nothing is posted without your approval.
+        Your accounts are yours alone; a Reddit or Mastodon account both scans and posts, and each project picks which account it uses. Source keys (RSS, X, YouTube)
+        apply to the whole server{isAdmin ? "" : " and are set by its admin"}. Nothing is posted without your approval.
       </p>
       {notice && (notice.ok ? <p className="ok-line" role="status">✓ {notice.text}</p> : <ErrorLine error={notice.text} />)}
       {meta.loading && !meta.data && <Loading label="Loading sources" />}
@@ -162,9 +164,11 @@ export function SourcesCard({ meta, settings, accounts, notice, tracking, lookup
                   r.accounts.length > 0 && <span className="badge b-ok">connected</span>
                 )}
                 {cfg ? (
-                  <button type="button" className="btn sm" onClick={() => setDialog({ kind: "source", settings: cfg })}>
-                    {ready ? "Edit" : "Set up"}
-                  </button>
+                  isAdmin && (
+                    <button type="button" className="btn sm" onClick={() => setDialog({ kind: "source", settings: cfg })}>
+                      {ready ? "Edit" : "Set up"}
+                    </button>
+                  )
                 ) : (
                   r.platform && (
                     <button type="button" className="btn sm" onClick={() => setDialog({ kind: "account", platform: r.platform as Platform })}>

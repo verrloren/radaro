@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "./api";
 import { useAsync } from "./hooks";
 import { makeSourceLookup } from "./sources";
-import type { Scope, TrackResult } from "./types";
+import type { Scope, TrackResult, User } from "./types";
 import { Rail, type View } from "./components/Rail";
 import { ScanCard } from "./components/ScanCard";
 import { Report } from "./components/Report";
@@ -59,7 +59,12 @@ function writeUrl(sel: Selection) {
   }
 }
 
-export default function App() {
+interface AppProps {
+  user: User;
+  onSignOut: () => void;
+}
+
+export default function App({ user, onSignOut }: AppProps) {
   const [sel, setSel] = useState<Selection>(readUrl);
   const [rev, setRev] = useState(0);
   const refresh = useCallback(() => setRev((r) => r + 1), []);
@@ -143,6 +148,8 @@ export default function App() {
         total={summary.data?.summary.total}
         needSetup={needSetup}
         meta={meta}
+        user={user}
+        onSignOut={onSignOut}
       />
 
       <main className="main">
@@ -215,6 +222,7 @@ export default function App() {
             </header>
             <div className="grid-setup">
               <SourcesCard
+                isAdmin={user.is_admin}
                 meta={meta}
                 settings={settings}
                 accounts={accounts}
@@ -225,9 +233,9 @@ export default function App() {
               />
               <ProjectsPanel
                 projects={projects}
-                project={project}
                 selectedId={sel.p}
-                allQueries={allQueries.data ?? []}
+                accounts={accounts}
+                rev={rev}
                 onSelect={(p) => select({ p, q: null, v: sel.v })}
                 onChanged={refresh}
               />

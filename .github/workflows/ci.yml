@@ -35,7 +35,5 @@ jobs:
       - run: go vet ./...
       - run: go test -race ./...
       - run: CGO_ENABLED=0 go build -o radaro ./cmd/radaro
-      - name: smoke test
-        run: |
-          ./radaro --db /tmp/demo.db demo --serve=false
-          ./radaro --db /tmp/demo.db report --json | jq -e '.summary.total == 30'
+      - name: end-to-end
+        run: scripts/e2e.sh

@@ -1,10 +1,13 @@
 import type {
   Account,
   AccountsResponse,
+  AuthConfig,
   ConnectRequest,
+  Keyword,
   Meta,
   Mention,
   Project,
+  ProjectAccount,
   Scope,
   Sentiment,
   SourceSettings,
@@ -12,6 +15,7 @@ import type {
   TrackRequest,
   TrackResult,
   Tracking,
+  User,
 } from "./types";
 
 export class ApiError extends Error {
@@ -35,11 +39,42 @@ function buildUrl(path: string, params?: Params): string {
   return s ? `${path}?${s}` : path;
 }
 
-async function request<T>(
-  method: "GET" | "POST" | "PUT" | "DELETE",
-  path: string,
-  opts: { params?: Params; body?: unknown; signal?: AbortSignal } = {},
-): Promise<T> {
+type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+type Opts = { params?: Params; body?: unknown; signal?: AbortSignal };
+
+// The session lives in httpOnly cookies the page cannot read. The access
+// cookie expires every 15 minutes: on a 401 the client refreshes once, shared
+// by every request that failed meanwhile, and retries.
+let refreshing: Promise<boolean> | null = null;
+const signedOutListeners = new Set<() => void>();
+
+/** Called when the session is gone for good (refresh failed). */
+export function onSignedOut(fn: () => void): () => void {
+  signedOutListeners.add(fn);
+  return () => signedOutListeners.delete(fn);
+}
+
+function refreshSession(): Promise<boolean> {
+  refreshing ??= fetch("/api/auth/refresh", { method: "POST", headers: { Accept: "application/json" } })
+    .then((r) => r.ok, () => false)
+    .finally(() => {
+      refreshing = null;
+    });
+  return refreshing;
+}
+
+async function request<T>(method: Method, path: string, opts: Opts = {}): Promise<T> {
+  try {
+    return await send<T>(method, path, opts);
+  } catch (e) {
+    if (!(e instanceof ApiError) || e.status !== 401 || path.startsWith("/api/auth/")) throw e;
+    if (await refreshSession()) return send<T>(method, path, opts);
+    signedOutListeners.forEach((fn) => fn());
+    throw e;
+  }
+}
+
+async function send<T>(method: Method, path: string, opts: Opts): Promise<T> {
   const init: RequestInit = { method, signal: opts.signal, headers: { Accept: "application/json" } };
   if (opts.body !== undefined) {
     init.headers = { ...init.headers, "Content-Type": "application/json" };
@@ -50,7 +85,7 @@ async function request<T>(
     res = await fetch(buildUrl(path, opts.params), init);
   } catch (e) {
     if (e instanceof DOMException && e.name === "AbortError") throw e;
-    throw new ApiError(0, "Cannot reach the Radaro server. Is `radaro serve` running?");
+    throw new ApiError(0, "Cannot reach the Radaro server.");
   }
   const text = await res.text();
   let data: unknown = null;
@@ -79,6 +114,18 @@ export function scopeParams(scope: Scope): Params {
 }
 
 export const api = {
+  authConfig: (signal?: AbortSignal) => request<AuthConfig>("GET", "/api/auth/config", { signal }),
+
+  me: (signal?: AbortSignal) => request<User>("GET", "/api/auth/me", { signal }),
+
+  login: (email: string, password: string) =>
+    request<{ user: User }>("POST", "/api/auth/login", { body: { email, password } }),
+
+  register: (email: string, password: string) =>
+    request<{ user: User }>("POST", "/api/auth/register", { body: { email, password } }),
+
+  logout: () => request<{ signed_out: boolean }>("POST", "/api/auth/logout"),
+
   health: (signal?: AbortSignal) =>
     request<{ status: string; database: string }>("GET", "/health", { signal }),
 
@@ -99,15 +146,26 @@ export const api = {
 
   deleteProject: (id: number) => request<{ deleted: boolean }>("DELETE", `/api/projects/${id}`),
 
-  addProjectQuery: (id: number, query: string) =>
-    request<{ added: boolean; project: Project }>("POST", `/api/projects/${id}/queries`, {
-      body: { query },
+  renameProject: (id: number, name: string) => request<Project>("PATCH", `/api/projects/${id}`, { body: { name } }),
+
+  keywords: (id: number, signal?: AbortSignal) => request<Keyword[]>("GET", `/api/projects/${id}/keywords`, { signal }),
+
+  addKeywords: (id: number, queries: string[]) =>
+    request<{ added: number; keywords: Keyword[] }>("POST", `/api/projects/${id}/keywords`, { body: { queries } }),
+
+  removeKeyword: (id: number, keywordId: number) =>
+    request<{ deleted: boolean }>("DELETE", `/api/projects/${id}/keywords/${keywordId}`),
+
+  projectAccounts: (id: number, signal?: AbortSignal) =>
+    request<ProjectAccount[]>("GET", `/api/projects/${id}/accounts`, { signal }),
+
+  bindAccount: (id: number, platform: string, accountId: number) =>
+    request<ProjectAccount[]>("PUT", `/api/projects/${id}/accounts/${encodeURIComponent(platform)}`, {
+      body: { account_id: accountId },
     }),
 
-  removeProjectQuery: (id: number, query: string) =>
-    request<{ removed: boolean; project: Project }>("DELETE", `/api/projects/${id}/queries`, {
-      body: { query },
-    }),
+  unbindAccount: (id: number, platform: string) =>
+    request<ProjectAccount[]>("DELETE", `/api/projects/${id}/accounts/${encodeURIComponent(platform)}`),
 
   summary: (scope: Scope, signal?: AbortSignal) =>
     request<SummaryResponse>("GET", "/api/summary", { params: scopeParams(scope), signal }),
@@ -140,9 +198,9 @@ export const api = {
 
   deleteAccount: (id: number) => request<{ deleted: boolean }>("DELETE", `/api/accounts/${id}`),
 
-  redditAuthorize: (clientId: string, clientSecret: string) =>
+  redditAuthorize: (clientId: string, clientSecret: string, projectId?: number) =>
     request<{ authorize_url: string; redirect_uri: string }>("POST", "/api/accounts/reddit/authorize", {
-      body: { client_id: clientId, client_secret: clientSecret },
+      body: { client_id: clientId, client_secret: clientSecret, project_id: projectId },
     }),
 };
 

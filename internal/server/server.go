@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"net/url"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/verrloren/radaro/internal/auth"
 	"github.com/verrloren/radaro/internal/config"
 	"github.com/verrloren/radaro/internal/model"
 	"github.com/verrloren/radaro/internal/pipeline"
@@ -31,19 +33,27 @@ type Server struct {
 	version string
 	assets  fs.FS // built dashboard (web/dist)
 	oauth   oauthStates
+	auth    *auth.Service
+	limiter *limiter
 
 	// connect and redditExchange reach the platforms; tests replace them.
 	connect        func(ctx context.Context, platform string, in publish.ConnectInput) (string, any, error)
 	redditExchange func(ctx context.Context, r *publish.Reddit, code string) error
+	newPublisher   func(platform string, credentials json.RawMessage, version string) (publish.Publisher, error)
 }
 
 // New returns a server over an open store. assets may be nil (API only).
-func New(cfg *config.Config, st *store.Store, version string, assets fs.FS) *Server {
-	return &Server{
-		cfg: cfg, store: st, version: version, assets: assets,
-		connect:        publish.Connect,
-		redditExchange: func(ctx context.Context, r *publish.Reddit, code string) error { return r.ExchangeCode(ctx, code) },
+func New(cfg *config.Config, st *store.Store, version string, assets fs.FS) (*Server, error) {
+	a, err := auth.New(st, cfg)
+	if err != nil {
+		return nil, err
 	}
+	return &Server{
+		cfg: cfg, store: st, version: version, assets: assets, auth: a, limiter: newLimiter(10, 10),
+		connect:        publish.Connect,
+		newPublisher:   publish.New,
+		redditExchange: func(ctx context.Context, r *publish.Reddit, code string) error { return r.ExchangeCode(ctx, code) },
+	}, nil
 }
 
 // Handler builds the HTTP routes.
@@ -53,25 +63,54 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/health", s.health)
 	r.Get(redditCallbackPath, s.redditCallback)
 	r.Route("/api", func(r chi.Router) {
-		r.Get("/meta", s.meta)
-		r.Get("/queries", s.queries)
-		r.Get("/tracking", s.tracking)
-		r.Get("/projects", s.projects)
-		r.Post("/projects", s.createProject)
-		r.Get("/projects/{id}", s.project)
-		r.Delete("/projects/{id}", s.deleteProject)
-		r.Post("/projects/{id}/queries", s.addProjectQuery)
-		r.Delete("/projects/{id}/queries", s.removeProjectQuery)
-		r.Get("/summary", s.summary)
-		r.Get("/mentions", s.mentions)
-		r.Post("/track", s.track)
-		r.Get("/settings/sources", s.listSourceSettings)
-		r.Put("/settings/sources/{name}", s.saveSourceSettings)
-		r.Delete("/settings/sources/{name}", s.deleteSourceSettings)
-		r.Get("/accounts", s.accounts)
-		r.Post("/accounts", s.connectAccount)
-		r.Delete("/accounts/{id}", s.deleteAccount)
-		r.Post("/accounts/reddit/authorize", s.redditAuthorize)
+		r.Route("/auth", func(r chi.Router) {
+			r.Get("/config", s.authConfig)
+			r.With(s.rateLimit).Post("/register", s.register)
+			r.With(s.rateLimit).Post("/login", s.login)
+			r.With(s.rateLimit).Post("/refresh", s.refresh)
+			r.Post("/logout", s.logout)
+			r.With(s.requireAuth).Get("/me", s.me)
+		})
+		r.Group(func(r chi.Router) {
+			r.Use(s.requireAuth)
+			r.Get("/meta", s.meta)
+			r.Get("/queries", s.queries)
+			r.Get("/tracking", s.tracking)
+			r.Get("/projects", s.projects)
+			r.Post("/projects", s.createProject)
+			r.Get("/projects/{id}", s.project)
+			r.Patch("/projects/{id}", s.renameProject)
+			r.Delete("/projects/{id}", s.deleteProject)
+			r.Get("/projects/{id}/keywords", s.keywords)
+			r.Post("/projects/{id}/keywords", s.addKeywords)
+			r.Delete("/projects/{id}/keywords/{kid}", s.removeKeyword)
+			r.Get("/projects/{id}/accounts", s.projectAccounts)
+			r.Put("/projects/{id}/accounts/{platform}", s.bindAccount)
+			r.Delete("/projects/{id}/accounts/{platform}", s.unbindAccount)
+			r.Get("/summary", s.summary)
+			r.Get("/mentions", s.mentions)
+			r.Post("/track", s.track)
+			r.Get("/report", s.report)
+			r.Get("/export", s.export)
+			r.Get("/opportunities", s.opportunities)
+			r.Get("/status", s.status)
+			r.Get("/activity", s.activity)
+			r.Get("/drafts", s.drafts)
+			r.Post("/drafts", s.createDraft)
+			r.Get("/drafts/{id}", s.draft)
+			r.Patch("/drafts/{id}", s.editDraft)
+			r.Post("/drafts/{id}/approve", s.approveDraft)
+			r.Post("/drafts/{id}/skip", s.skipDraft)
+			r.Post("/drafts/{id}/publish", s.publishDraft)
+			r.Get("/stats", s.stats)
+			r.Get("/settings/sources", s.listSourceSettings)
+			r.With(s.requireAdmin).Put("/settings/sources/{name}", s.saveSourceSettings)
+			r.With(s.requireAdmin).Delete("/settings/sources/{name}", s.deleteSourceSettings)
+			r.Get("/accounts", s.accounts)
+			r.Post("/accounts", s.connectAccount)
+			r.Delete("/accounts/{id}", s.deleteAccount)
+			r.Post("/accounts/reddit/authorize", s.redditAuthorize)
+		})
 		r.NotFound(func(w http.ResponseWriter, _ *http.Request) { writeError(w, http.StatusNotFound, "not found") })
 	})
 	r.NotFound(s.spa)
@@ -91,8 +130,8 @@ type sourceInfo struct {
 	Configured bool `json:"configured"`
 }
 
-func (s *Server) meta(w http.ResponseWriter, _ *http.Request) {
-	opts, err := pipeline.SourceOptions(s.cfg, s.store)
+func (s *Server) meta(w http.ResponseWriter, r *http.Request) {
+	opts, err := pipeline.SourceOptions(s.cfg, s.store, userID(r), 0)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -110,10 +149,10 @@ func (s *Server) meta(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) queries(w http.ResponseWriter, r *http.Request) {
 	pid, ok := optionalID(w, r.URL.Query().Get("p"))
-	if !ok {
+	if !ok || (pid != 0 && !s.ownProject(w, r, pid)) {
 		return
 	}
-	qs, err := s.store.Queries(pid)
+	qs, err := s.store.Queries(userID(r), pid)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -125,6 +164,15 @@ func (s *Server) tracking(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if q == "" {
 		writeError(w, http.StatusUnprocessableEntity, "q is required")
+		return
+	}
+	owns, err := s.store.OwnsQuery(userID(r), q)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	if !owns {
+		writeError(w, http.StatusNotFound, "keyword is not tracked")
 		return
 	}
 	t, err := s.store.Tracking(q)
@@ -139,8 +187,8 @@ func (s *Server) tracking(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, t)
 }
 
-func (s *Server) projects(w http.ResponseWriter, _ *http.Request) {
-	ps, err := s.store.Projects()
+func (s *Server) projects(w http.ResponseWriter, r *http.Request) {
+	ps, err := s.store.Projects(userID(r))
 	if err != nil {
 		internalError(w, err)
 		return
@@ -153,7 +201,7 @@ func (s *Server) project(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	p, err := s.store.Project(id)
+	p, err := s.store.Project(userID(r), id)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -172,11 +220,12 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	p, err := s.store.CreateProject(body.Name)
+	p, err := s.store.CreateProject(userID(r), body.Name)
 	if err != nil {
 		storeError(w, err, http.StatusUnprocessableEntity)
 		return
 	}
+	_ = s.store.LogActivity(userID(r), "project.created", 0, p.Name)
 	writeJSON(w, http.StatusCreated, p)
 }
 
@@ -185,7 +234,7 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	deleted, err := s.store.DeleteProject(id)
+	deleted, err := s.store.DeleteProject(userID(r), id)
 	if err != nil {
 		storeError(w, err, http.StatusInternalServerError)
 		return
@@ -194,59 +243,116 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "project not found")
 		return
 	}
+	_ = s.store.LogActivity(userID(r), "project.deleted", 0, fmt.Sprintf("project %d", id))
 	writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 }
 
-func (s *Server) addProjectQuery(w http.ResponseWriter, r *http.Request) {
+func (s *Server) renameProject(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
 		return
 	}
 	var body struct {
-		Query string `json:"query"`
+		Name string `json:"name"`
 	}
 	if !decode(w, r, &body) {
 		return
 	}
-	added, err := s.store.AddQueryToProject(id, body.Query)
+	p, err := s.store.RenameProject(userID(r), id, body.Name)
 	if err != nil {
 		storeError(w, err, http.StatusUnprocessableEntity)
 		return
 	}
-	p, err := s.store.Project(id)
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"added": added, "project": p})
+	writeJSON(w, http.StatusOK, p)
 }
 
-func (s *Server) removeProjectQuery(w http.ResponseWriter, r *http.Request) {
+func (s *Server) keywords(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	ks, err := s.store.Keywords(userID(r), id)
+	if err != nil {
+		storeError(w, err, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, ks)
+}
+
+// addKeywords adds one keyword or a batch. New keywords are registered for
+// scanning with the given sources, or the instance defaults.
+func (s *Server) addKeywords(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
 		return
 	}
 	var body struct {
-		Query string `json:"query"`
+		Query   string   `json:"query"`
+		Queries []string `json:"queries"`
+		Sources []string `json:"sources"`
 	}
 	if !decode(w, r, &body) {
 		return
 	}
-	removed, err := s.store.RemoveQueryFromProject(id, body.Query)
+	queries := body.Queries
+	if body.Query != "" {
+		queries = append(queries, body.Query)
+	}
+	if len(queries) == 0 {
+		writeError(w, http.StatusUnprocessableEntity, "query or queries is required")
+		return
+	}
+	srcs := body.Sources
+	if len(srcs) == 0 {
+		srcs = s.cfg.Sources
+	}
+	for _, n := range srcs {
+		if _, ok := sources.Lookup(strings.ToLower(strings.TrimSpace(n))); !ok {
+			writeError(w, http.StatusUnprocessableEntity, "unknown source: "+n)
+			return
+		}
+	}
+	added, err := s.store.AddKeywords(userID(r), id, queries, srcs)
+	if err != nil {
+		storeError(w, err, http.StatusUnprocessableEntity)
+		return
+	}
+	if added > 0 {
+		_ = s.store.LogActivity(userID(r), "keyword.added", 0, fmt.Sprintf("%d keyword(s) to project %d", added, id))
+	}
+	ks, err := s.store.Keywords(userID(r), id)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	status := http.StatusOK
+	if added > 0 {
+		status = http.StatusCreated
+	}
+	writeJSON(w, status, map[string]any{"added": added, "keywords": ks})
+}
+
+func (s *Server) removeKeyword(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	kid, ok := parseID(chi.URLParam(r, "kid"))
+	if !ok {
+		writeError(w, http.StatusUnprocessableEntity, "invalid keyword id")
+		return
+	}
+	removed, err := s.store.RemoveKeyword(userID(r), id, kid)
 	if err != nil {
 		storeError(w, err, http.StatusInternalServerError)
 		return
 	}
 	if !removed {
-		writeError(w, http.StatusNotFound, "keyword is not in this project")
+		writeError(w, http.StatusNotFound, "keyword not found")
 		return
 	}
-	p, err := s.store.Project(id)
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"removed": true, "project": p})
+	_ = s.store.LogActivity(userID(r), "keyword.removed", 0, fmt.Sprintf("keyword %d from project %d", kid, id))
+	writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 }
 
 func (s *Server) scope(w http.ResponseWriter, r *http.Request) (store.Scope, bool) {
@@ -259,18 +365,10 @@ func (s *Server) scope(w http.ResponseWriter, r *http.Request) (store.Scope, boo
 		writeError(w, http.StatusUnprocessableEntity, "choose a keyword or a project, not both")
 		return store.Scope{}, false
 	}
-	if pid != 0 {
-		p, err := s.store.Project(pid)
-		if err != nil {
-			internalError(w, err)
-			return store.Scope{}, false
-		}
-		if p == nil {
-			writeError(w, http.StatusNotFound, "project not found")
-			return store.Scope{}, false
-		}
+	if pid != 0 && !s.ownProject(w, r, pid) {
+		return store.Scope{}, false
 	}
-	return store.Scope{Query: q, ProjectID: pid}, true
+	return store.Scope{UserID: userID(r), Query: q, ProjectID: pid}, true
 }
 
 func (s *Server) summary(w http.ResponseWriter, r *http.Request) {
@@ -363,6 +461,7 @@ func (s *Server) track(w http.ResponseWriter, r *http.Request) {
 		Sources   []string `json:"sources"`
 		Mode      string   `json:"mode"`
 		Pages     int      `json:"pages"`
+		Limit     int      `json:"limit"`
 		ProjectID *int64   `json:"project_id"`
 	}
 	if !decode(w, r, &body) {
@@ -385,8 +484,22 @@ func (s *Server) track(w http.ResponseWriter, r *http.Request) {
 		}
 		names = append(names, n)
 	}
+	if len(body.Sources) == 0 {
+		// Rescan with what the keyword was tracked with, else the defaults.
+		names = s.cfg.Sources
+		if t, err := s.store.Tracking(query); err != nil {
+			internalError(w, err)
+			return
+		} else if t != nil && len(t.Sources) > 0 {
+			names = t.Sources
+		}
+	}
 	if len(names) == 0 {
 		writeError(w, http.StatusUnprocessableEntity, "select at least one source")
+		return
+	}
+	if body.Limit != 0 && (body.Limit < 1 || body.Limit > 100) {
+		writeError(w, http.StatusUnprocessableEntity, "limit must be between 1 and 100")
 		return
 	}
 	if body.Mode == "" {
@@ -406,28 +519,40 @@ func (s *Server) track(w http.ResponseWriter, r *http.Request) {
 	var pid int64
 	if body.ProjectID != nil {
 		pid = *body.ProjectID
-		p, err := s.store.Project(pid)
-		if err != nil {
-			internalError(w, err)
-			return
-		}
-		if p == nil {
-			writeError(w, http.StatusNotFound, "project not found")
+		if !s.ownProject(w, r, pid) {
 			return
 		}
 	}
 	cfg := *s.cfg
 	cfg.Sources = names
+	if body.Limit != 0 {
+		cfg.PerSourceLimit = body.Limit
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 	res, err := pipeline.New(&cfg, s.store).Track(ctx, query, pipeline.Options{
-		Backfill: body.Mode == "backfill", Pages: body.Pages, ProjectID: pid,
+		Backfill: body.Mode == "backfill", Pages: body.Pages, UserID: userID(r), ProjectID: pid,
 	})
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
+}
+
+// ownProject answers 404 unless the project belongs to the signed-in user,
+// so ids of other users' projects cannot be probed.
+func (s *Server) ownProject(w http.ResponseWriter, r *http.Request, id int64) bool {
+	p, err := s.store.Project(userID(r), id)
+	if err != nil {
+		internalError(w, err)
+		return false
+	}
+	if p == nil {
+		writeError(w, http.StatusNotFound, "project not found")
+		return false
+	}
+	return true
 }
 
 // spa serves the built dashboard, falling back to index.html for client routes.

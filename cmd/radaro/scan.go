@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -10,8 +11,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/verrloren/radaro/internal/analyze"
+	"github.com/verrloren/radaro/internal/client"
 	"github.com/verrloren/radaro/internal/pipeline"
 	"github.com/verrloren/radaro/internal/sampledata"
+	"github.com/verrloren/radaro/internal/server"
 	"github.com/verrloren/radaro/internal/store"
 )
 
@@ -42,7 +45,7 @@ func (a *app) demoCmd() *cobra.Command {
 			if _, err := st.Upsert(mentions, false); err != nil {
 				return err
 			}
-			if err := st.SaveTracking(sampledata.Query, []string{"hackernews", "reddit", "mastodon", "bluesky"}, 0); err != nil {
+			if err := st.SaveTracking(0, sampledata.Query, []string{"hackernews", "reddit", "mastodon", "bluesky"}, 0); err != nil {
 				return err
 			}
 			if err := reclusterAndPrint(st, sampledata.Query); err != nil {
@@ -67,26 +70,58 @@ type scanFlags struct {
 }
 
 func (f *scanFlags) register(cmd *cobra.Command, pagesHelp string) {
-	cmd.Flags().StringVar(&f.sources, "sources", "", "comma-separated sources (default: $RADARO_SOURCES or hackernews,bluesky)")
-	cmd.Flags().IntVar(&f.limit, "limit", 50, "max items per source page (1-100)")
+	cmd.Flags().StringVar(&f.sources, "sources", "", "comma-separated sources (default: the keyword's, else the server's RADARO_SOURCES)")
+	cmd.Flags().IntVar(&f.limit, "limit", 0, "max items per source page (1-100; default: the server's)")
 	cmd.Flags().IntVar(&f.pages, "pages", 3, pagesHelp)
 }
 
-func (a *app) applyScanFlags(f *scanFlags) error {
-	if f.limit < 1 || f.limit > 100 {
-		return errors.New("--limit must be between 1 and 100")
+// trackRequest is the body of POST /api/track.
+type trackRequest struct {
+	Query     string   `json:"query"`
+	Sources   []string `json:"sources,omitempty"`
+	Mode      string   `json:"mode"`
+	Pages     int      `json:"pages"`
+	Limit     int      `json:"limit,omitempty"`
+	ProjectID *int64   `json:"project_id,omitempty"`
+}
+
+func (f *scanFlags) request(query, mode string) (trackRequest, error) {
+	if f.limit != 0 && (f.limit < 1 || f.limit > 100) {
+		return trackRequest{}, errors.New("--limit must be between 1 and 100")
 	}
 	if f.pages < 1 || f.pages > 20 {
-		return errors.New("--pages must be between 1 and 20")
+		return trackRequest{}, errors.New("--pages must be between 1 and 20")
 	}
-	a.cfg.PerSourceLimit = f.limit
+	req := trackRequest{Query: query, Mode: mode, Pages: f.pages, Limit: f.limit}
 	if f.sources != "" {
-		a.cfg.Sources = splitSources(f.sources)
-		if len(a.cfg.Sources) == 0 {
-			return errors.New("provide at least one source")
+		if req.Sources = splitSources(f.sources); len(req.Sources) == 0 {
+			return trackRequest{}, errors.New("provide at least one source")
 		}
 	}
-	return nil
+	return req, nil
+}
+
+// scan runs one scan on the server. Scans can take minutes.
+func (a *app) scan(ctx context.Context, c *client.Client, req trackRequest) (*pipeline.Result, error) {
+	var res pipeline.Result
+	if err := c.Do(ctx, "POST", "/api/track", nil, req, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+func scannedSources(res *pipeline.Result) []string {
+	names := make([]string, 0, len(res.BySource))
+	for n := range res.BySource {
+		names = append(names, n)
+	}
+	for n := range res.Errors {
+		if _, ok := res.BySource[n]; !ok {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 func (a *app) trackCmd() *cobra.Command {
@@ -96,25 +131,28 @@ func (a *app) trackCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "track <keyword>",
-		Short: "Fetch live mentions for a keyword, analyze and store them",
+		Short: "Scan a keyword now on the server: fetch, analyze and store mentions",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			query, err := cleanQuery(args[0])
 			if err != nil {
 				return err
 			}
-			if err := a.applyScanFlags(&f); err != nil {
-				return err
-			}
-			st, err := a.openStore()
+			req, err := f.request(query, "incremental")
 			if err != nil {
 				return err
 			}
-			defer st.Close()
-			if !a.jsonFlag {
-				fmt.Printf("Listening for “%s” across: %s …\n", query, joinComma(a.cfg.Sources))
+			if project != 0 {
+				req.ProjectID = &project
 			}
-			res, err := pipeline.New(a.cfg, st).Track(cmd.Context(), query, pipeline.Options{Pages: f.pages, ProjectID: project})
+			c, err := a.api()
+			if err != nil {
+				return err
+			}
+			if !a.jsonFlag {
+				fmt.Printf("Listening for “%s” …\n", query)
+			}
+			res, err := a.scan(cmd.Context(), c, req)
 			if err != nil {
 				return err
 			}
@@ -126,19 +164,19 @@ func (a *app) trackCmd() *cobra.Command {
 				printScanProblems(res)
 				printAlertResult(res)
 				fmt.Printf("✓ %d fetched · %d new\n", res.Fetched, res.New)
-				if err := printReport(st, query); err != nil {
+				if err := a.printReport(cmd.Context(), c, query); err != nil {
 					return err
 				}
-				fmt.Printf("\nView the dashboard: radaro serve --db %s\n", a.cfg.DBPath)
+				fmt.Printf("\nView the dashboard: %s\n", c.Server)
 			}
-			if len(res.Errors) == len(a.cfg.Sources) {
-				return exitError{1} // every configured source failed
+			if len(res.Errors) > 0 && len(res.Errors) == len(scannedSources(res)) {
+				return exitError{1} // every source failed
 			}
 			return nil
 		},
 	}
 	f.register(cmd, "max continuation pages when catching up new mentions (1-20)")
-	cmd.Flags().Int64Var(&project, "project", 0, "add this keyword to a project by numeric ID")
+	cmd.Flags().Int64Var(&project, "project", 0, "file the keyword under this project (default: already filed, else Default)")
 	return cmd
 }
 
@@ -153,25 +191,18 @@ func (a *app) backfillCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := a.applyScanFlags(&f); err != nil {
-				return err
-			}
-			st, err := a.openStore()
+			req, err := f.request(query, "backfill")
 			if err != nil {
 				return err
 			}
-			defer st.Close()
-			if f.sources == "" {
-				if t, err := st.Tracking(query); err != nil {
-					return err
-				} else if t != nil && len(t.Sources) > 0 {
-					a.cfg.Sources = t.Sources
-				}
+			c, err := a.api()
+			if err != nil {
+				return err
 			}
 			if !a.jsonFlag {
-				fmt.Printf("Backfilling “%s” across: %s (up to %d pages each) …\n", query, joinComma(a.cfg.Sources), f.pages)
+				fmt.Printf("Backfilling “%s” (up to %d pages per source) …\n", query, f.pages)
 			}
-			res, err := pipeline.New(a.cfg, st).Track(cmd.Context(), query, pipeline.Options{Backfill: true, Pages: f.pages})
+			res, err := a.scan(cmd.Context(), c, req)
 			if err != nil {
 				return err
 			}
@@ -181,7 +212,7 @@ func (a *app) backfillCmd() *cobra.Command {
 				}
 			} else {
 				printScanProblems(res)
-				for _, src := range a.cfg.Sources {
+				for _, src := range scannedSources(res) {
 					done := ""
 					if res.BackfillComplete[src] {
 						done = " · history complete"
@@ -190,7 +221,7 @@ func (a *app) backfillCmd() *cobra.Command {
 				}
 				fmt.Printf("✓ %d fetched · %d historical mentions added\n", res.Fetched, res.New)
 			}
-			if len(res.Errors) == len(a.cfg.Sources) {
+			if len(res.Errors) > 0 && len(res.Errors) == len(scannedSources(res)) {
 				return exitError{1}
 			}
 			return nil
@@ -215,26 +246,27 @@ func (a *app) watchCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := a.applyScanFlags(&f); err != nil {
+			req, err := f.request(query, "incremental")
+			if err != nil {
 				return err
 			}
 			if every < 30 {
 				return errors.New("--every must be at least 30 seconds")
 			}
-			st, err := a.openStore()
+			c, err := a.api()
 			if err != nil {
 				return err
 			}
-			defer st.Close()
 			ctx := cmd.Context()
-			fmt.Printf("Watching “%s” every %ds across: %s (Ctrl-C to stop)\n", query, every, joinComma(a.cfg.Sources))
-			p := pipeline.New(a.cfg, st)
+			fmt.Printf("Watching “%s” every %ds on %s (Ctrl-C to stop)\n", query, every, c.Server)
 			for n := 1; ; n++ {
-				res, err := p.Track(ctx, query, pipeline.Options{Pages: f.pages})
+				res, err := a.scan(ctx, c, req)
 				switch {
 				case ctx.Err() != nil:
 					fmt.Println("\nStopped watching.")
 					return nil
+				case errors.Is(err, client.ErrNotSignedIn):
+					return err
 				case err != nil: // a single failed scan must not kill the watcher
 					fmt.Printf("  ✗ scan %d failed: %v\n", n, err)
 				default:
@@ -306,7 +338,13 @@ func reclusterAndPrint(st *store.Store, query string) error {
 	if _, err := st.Upsert(mentions, true); err != nil {
 		return err
 	}
-	return printReport(st, query)
+	r, err := server.BuildReport(st, store.Scope{Query: query})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("\n“%s” — %d mentions\n", query, r.Summary.Total)
+	printReportBody(r)
+	return nil
 }
 
 func joinComma(items []string) string {

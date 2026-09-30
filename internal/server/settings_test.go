@@ -34,7 +34,7 @@ func field(v sourceSettingsView, key string) fieldView {
 func TestSourceSettings(t *testing.T) {
 	cfg := &config.Config{Sources: []string{"hackernews"}, SourceOptions: sources.Options{YouTubeAPIKey: "env-yt-key"}}
 	srv, _ := newTestServer(t, cfg)
-	h := srv.Handler()
+	h := signedIn(t, srv, "owner@example.com")
 
 	rec := do(h, "GET", "/api/settings/sources", "")
 	var all []sourceSettingsView
@@ -99,7 +99,7 @@ func TestAccountEndpoints(t *testing.T) {
 		}
 		return "me", publish.DevtoCredentials{APIKey: in.Secret}, nil
 	}
-	h := srv.Handler()
+	h := signedIn(t, srv, "owner@example.com")
 
 	if rec := do(h, "POST", "/api/accounts", `{"platform":"devto","secret":"bad"}`); rec.Code != 422 || !strings.Contains(rec.Body.String(), "rejected") {
 		t.Fatalf("bad key %d %s", rec.Code, rec.Body)
@@ -143,7 +143,7 @@ func TestRedditOAuth(t *testing.T) {
 		r.Creds.RefreshToken, r.Creds.Username = "refresh", "spez"
 		return nil
 	}
-	h := srv.Handler()
+	h := signedIn(t, srv, "owner@example.com")
 
 	if rec := do(h, "POST", "/api/accounts/reddit/authorize", `{"client_id":""}`); rec.Code != 422 {
 		t.Fatalf("missing client id %d", rec.Code)
@@ -169,7 +169,7 @@ func TestRedditOAuth(t *testing.T) {
 	if rec.Code != 303 || rec.Header().Get("Location") != "/?v=setup&connected=reddit" || gotCode != "the-code" {
 		t.Fatalf("callback %d %s", rec.Code, rec.Header().Get("Location"))
 	}
-	accs, _ := st.Accounts("reddit")
+	accs, _ := st.Accounts(0, "reddit")
 	if len(accs) != 1 || accs[0].Handle != "spez" || !strings.Contains(string(accs[0].Credentials), `"refresh_token":"refresh"`) {
 		t.Fatalf("saved %+v", accs)
 	}
