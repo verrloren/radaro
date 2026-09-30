@@ -31,7 +31,7 @@ func projectPath(id int64, rest ...string) string {
 }
 
 func (a *app) projectCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "project", Short: "Your projects: keywords and the accounts each project publishes with"}
+	cmd := &cobra.Command{Use: "project", Short: "Your projects: keywords and the pool of accounts each project publishes with"}
 	cmd.AddCommand(
 		&cobra.Command{
 			Use: "list", Short: "List your projects and their sizes", Args: cobra.NoArgs,
@@ -156,20 +156,7 @@ func (a *app) projectCmd() *cobra.Command {
 		a.projectDeleteCmd(),
 		a.projectAccountsCmd(),
 		a.projectBindCmd(),
-		&cobra.Command{
-			Use: "unbind <project-id> <platform>", Short: "Stop a project from using an account on a platform", Args: cobra.ExactArgs(2),
-			RunE: a.apiCmd(func(ctx context.Context, c *client.Client, args []string) error {
-				id, err := projectID(args[0])
-				if err != nil {
-					return err
-				}
-				if err := c.Do(ctx, "DELETE", projectPath(id, "/accounts/", args[1]), nil, nil, nil); err != nil {
-					return err
-				}
-				fmt.Printf("✓ project %d no longer uses a %s account\n", id, args[1])
-				return nil
-			}),
-		},
+		a.projectUnbindCmd(),
 	)
 	return cmd
 }
@@ -226,70 +213,6 @@ func (a *app) projectDeleteCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "confirm deletion")
 	return cmd
-}
-
-type projectAccount struct {
-	Platform struct {
-		Name  string `json:"name"`
-		Label string `json:"label"`
-	} `json:"platform"`
-	Account *store.Account `json:"account"`
-}
-
-func (a *app) projectAccountsCmd() *cobra.Command {
-	return &cobra.Command{
-		Use: "accounts <project-id>", Short: "Which account a project publishes (and scans) with on each platform", Args: cobra.ExactArgs(1),
-		RunE: a.apiCmd(func(ctx context.Context, c *client.Client, args []string) error {
-			id, err := projectID(args[0])
-			if err != nil {
-				return err
-			}
-			var list []projectAccount
-			if err := c.Do(ctx, "GET", projectPath(id, "/accounts"), nil, nil, &list); err != nil {
-				return err
-			}
-			if a.jsonFlag {
-				return printJSON(list)
-			}
-			printProjectAccounts(id, list)
-			return nil
-		}),
-	}
-}
-
-func printProjectAccounts(id int64, list []projectAccount) {
-	for _, b := range list {
-		acc := "—  (radaro project bind " + strconv.FormatInt(id, 10) + " " + b.Platform.Name + " <account-id>)"
-		if b.Account != nil {
-			acc = fmt.Sprintf("#%d %s", b.Account.ID, b.Account.Handle)
-		}
-		fmt.Printf("  %-9s %s\n", b.Platform.Label, acc)
-	}
-}
-
-func (a *app) projectBindCmd() *cobra.Command {
-	return &cobra.Command{
-		Use: "bind <project-id> <platform> <account-id>", Short: "Make a project publish and scan with this account (see radaro accounts)", Args: cobra.ExactArgs(3),
-		RunE: a.apiCmd(func(ctx context.Context, c *client.Client, args []string) error {
-			id, err := projectID(args[0])
-			if err != nil {
-				return err
-			}
-			acc, err := strconv.ParseInt(args[2], 10, 64)
-			if err != nil || acc < 1 {
-				return errors.New("account id must be a positive integer")
-			}
-			var list []projectAccount
-			if err := c.Do(ctx, "PUT", projectPath(id, "/accounts/", args[1]), nil, map[string]int64{"account_id": acc}, &list); err != nil {
-				return err
-			}
-			if a.jsonFlag {
-				return printJSON(list)
-			}
-			fmt.Printf("✓ project %d uses account %d on %s\n", id, acc, args[1])
-			return nil
-		}),
-	}
 }
 
 // findKeyword looks a keyword up by text, or by id when the argument is one.

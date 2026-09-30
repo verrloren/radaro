@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
@@ -25,9 +24,9 @@ func (a *app) connectCmd() *cobra.Command {
 		Short: "Connect a publishing account (stored on the server, readable only by you)",
 		Long: "Connect a publishing account. Secrets are read from a hidden prompt, or from stdin\n" +
 			"when it is not a terminal (e.g. `echo $TOKEN | radaro connect devto`).\n" +
-			"With --project the account is also bound to that project. The dashboard connects accounts too.",
+			"With --project the account is also added to that project's pool. The dashboard connects accounts too.",
 	}
-	cmd.PersistentFlags().Int64Var(&project, "project", 0, "also make this project publish with the account")
+	cmd.PersistentFlags().Int64Var(&project, "project", 0, "also add the account to this project's pool")
 
 	var bskyHandle, bskyService string
 	bsky := &cobra.Command{
@@ -114,7 +113,7 @@ func (a *app) connect(ctx context.Context, body map[string]any, project int64) e
 	}
 	fmt.Printf("✓ connected %s as %s (account %d)\n", acc.Platform, acc.Handle, acc.ID)
 	if project != 0 {
-		fmt.Printf("  project %d now publishes with it\n", project)
+		fmt.Printf("  added to project %d's %s pool\n", project, acc.Platform)
 	}
 	return nil
 }
@@ -223,45 +222,4 @@ func readSecret(prompt string) (string, error) {
 		return "", errEmptySecret
 	}
 	return value, nil
-}
-
-func (a *app) accountsCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use: "accounts", Short: "List your connected publishing accounts", Args: cobra.NoArgs,
-		RunE: a.apiCmd(func(ctx context.Context, c *client.Client, _ []string) error {
-			var list struct {
-				Accounts []store.Account `json:"accounts"`
-			}
-			if err := c.Do(ctx, "GET", "/api/accounts", nil, nil, &list); err != nil {
-				return err
-			}
-			if a.jsonFlag {
-				return printJSON(list.Accounts)
-			}
-			if len(list.Accounts) == 0 {
-				fmt.Println("No accounts yet. Connect one with: radaro connect bluesky|mastodon|devto|reddit")
-				return nil
-			}
-			fmt.Printf("%4s  %-9s %s\n", "ID", "PLATFORM", "HANDLE")
-			for _, acc := range list.Accounts {
-				fmt.Printf("%4d  %-9s %s\n", acc.ID, acc.Platform, acc.Handle)
-			}
-			return nil
-		}),
-	}
-	cmd.AddCommand(&cobra.Command{
-		Use: "remove <id>", Short: "Forget a connected account and its credentials", Args: cobra.ExactArgs(1),
-		RunE: a.apiCmd(func(ctx context.Context, c *client.Client, args []string) error {
-			id, err := strconv.ParseInt(args[0], 10, 64)
-			if err != nil || id < 1 {
-				return errors.New("account id must be a positive number")
-			}
-			if err := c.Do(ctx, "DELETE", "/api/accounts/"+args[0], nil, nil, nil); err != nil {
-				return err
-			}
-			fmt.Printf("✓ removed account %d\n", id)
-			return nil
-		}),
-	})
-	return cmd
 }
