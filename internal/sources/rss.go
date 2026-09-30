@@ -10,6 +10,7 @@ import (
 	"github.com/mmcdole/gofeed"
 
 	"github.com/verrloren/radaro/internal/model"
+	"github.com/verrloren/radaro/internal/netproxy"
 )
 
 // RSS filters entries of configured RSS/Atom feeds (blogs, news, Google Alerts
@@ -25,7 +26,7 @@ func (s *RSS) FetchPage(ctx context.Context, query string, limit int, cursor str
 	needle := strings.ToLower(query)
 	parser := gofeed.NewParser()
 	parser.UserAgent = UserAgent
-	parser.Client = &http.Client{Timeout: 15 * time.Second}
+	parser.Client = &http.Client{Timeout: 15 * time.Second, Transport: netproxy.Transport()}
 
 	var mentions []model.Mention
 	for _, feedURL := range s.Feeds {

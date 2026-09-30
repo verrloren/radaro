@@ -178,7 +178,7 @@ func (a *app) checkAccounts(ctx context.Context, c *client.Client, args []string
 		return err
 	}
 	problems := append([]string{}, res.Errors...)
-	if res.Error != "" {
+	if res.Error != "" && len(res.Errors) == 0 {
 		problems = append(problems, res.Error)
 	}
 	raw, views, err := decodeViews(res.Accounts)

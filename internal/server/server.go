@@ -20,6 +20,8 @@ import (
 	"github.com/verrloren/radaro/internal/auth"
 	"github.com/verrloren/radaro/internal/config"
 	"github.com/verrloren/radaro/internal/model"
+	"github.com/verrloren/radaro/internal/netproxy"
+	"github.com/verrloren/radaro/internal/outbox"
 	"github.com/verrloren/radaro/internal/pipeline"
 	"github.com/verrloren/radaro/internal/publish"
 	"github.com/verrloren/radaro/internal/sources"
@@ -35,6 +37,7 @@ type Server struct {
 	oauth   oauthStates
 	auth    *auth.Service
 	limiter *limiter
+	outbox  *outbox.Service
 
 	// connect and redditExchange reach the platforms; tests replace them.
 	connect        func(ctx context.Context, platform string, in publish.ConnectInput) (string, any, error)
@@ -44,17 +47,32 @@ type Server struct {
 
 // New returns a server over an open store. assets may be nil (API only).
 func New(cfg *config.Config, st *store.Store, version string, assets fs.FS) (*Server, error) {
+	proxyURL, err := st.ProxyURL()
+	if err != nil {
+		return nil, err
+	}
+	if err := netproxy.Set(proxyURL); err != nil {
+		return nil, err
+	}
 	a, err := auth.New(st, cfg)
 	if err != nil {
 		return nil, err
 	}
-	return &Server{
+	s := &Server{
 		cfg: cfg, store: st, version: version, assets: assets, auth: a, limiter: newLimiter(10, 10),
 		connect:        publish.Connect,
 		newPublisher:   publish.New,
 		redditExchange: func(ctx context.Context, r *publish.Reddit, code string) error { return r.ExchangeCode(ctx, code) },
-	}, nil
+	}
+	s.outbox = outbox.New(st, version)
+	s.outbox.NewPublisher = func(platform string, credentials json.RawMessage, version string) (publish.Publisher, error) {
+		return s.newPublisher(platform, credentials, version)
+	}
+	return s, nil
 }
+
+// Outbox is the publishing service used by the API and background checks.
+func (s *Server) Outbox() *outbox.Service { return s.outbox }
 
 // Handler builds the HTTP routes.
 func (s *Server) Handler() http.Handler {
@@ -87,6 +105,7 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/projects/{id}/accounts", s.projectAccounts)
 			r.Put("/projects/{id}/accounts/{platform}", s.bindAccount)
 			r.Delete("/projects/{id}/accounts/{platform}", s.unbindAccount)
+			r.Delete("/projects/{id}/accounts/{platform}/{account_id}", s.unbindProjectAccount)
 			r.Get("/summary", s.summary)
 			r.Get("/mentions", s.mentions)
 			r.Post("/track", s.track)
@@ -97,19 +116,30 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/activity", s.activity)
 			r.Get("/drafts", s.drafts)
 			r.Post("/drafts", s.createDraft)
+			r.Get("/drafts/counts", s.draftCounts)
 			r.Get("/drafts/{id}", s.draft)
 			r.Patch("/drafts/{id}", s.editDraft)
+			r.Get("/drafts/{id}/warnings", s.draftWarnings)
 			r.Post("/drafts/{id}/approve", s.approveDraft)
 			r.Post("/drafts/{id}/skip", s.skipDraft)
 			r.Post("/drafts/{id}/publish", s.publishDraft)
 			r.Get("/stats", s.stats)
 			r.Get("/settings/sources", s.listSourceSettings)
+			r.With(s.requireAdmin).Get("/settings/proxy", s.proxySettings)
+			r.With(s.requireAdmin).Put("/settings/proxy", s.saveProxySettings)
+			r.With(s.requireAdmin).Delete("/settings/proxy", s.deleteProxySettings)
 			r.With(s.requireAdmin).Put("/settings/sources/{name}", s.saveSourceSettings)
 			r.With(s.requireAdmin).Delete("/settings/sources/{name}", s.deleteSourceSettings)
 			r.Get("/accounts", s.accounts)
 			r.Post("/accounts", s.connectAccount)
+			r.Post("/accounts/import", s.importAccounts)
+			r.Get("/accounts/stats", s.accountStats)
+			r.Post("/accounts/check", s.checkAllAccounts)
+			r.Patch("/accounts/{id}", s.updateAccount)
+			r.Post("/accounts/{id}/check", s.checkAccount)
 			r.Delete("/accounts/{id}", s.deleteAccount)
 			r.Post("/accounts/reddit/authorize", s.redditAuthorize)
+			r.Get("/accounts/reddit/app", s.redditApp)
 		})
 		r.NotFound(func(w http.ResponseWriter, _ *http.Request) { writeError(w, http.StatusNotFound, "not found") })
 	})

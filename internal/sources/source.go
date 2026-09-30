@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/verrloren/radaro/internal/model"
+	"github.com/verrloren/radaro/internal/netproxy"
 )
 
 // UserAgent identifies Radaro to source APIs.
@@ -152,7 +153,7 @@ func Retryable(err error) bool {
 	return errors.As(err, &ue)
 }
 
-var client = &http.Client{Timeout: 15 * time.Second}
+var client = &http.Client{Timeout: 15 * time.Second, Transport: netproxy.Transport()}
 
 // getJSON performs a GET with Radaro's user agent and decodes a JSON body into out.
 func getJSON(ctx context.Context, endpoint string, params url.Values, headers map[string]string, out any) error {

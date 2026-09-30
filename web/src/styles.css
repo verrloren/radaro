@@ -2860,3 +2860,561 @@ a.auth-back:hover {
     display: inline-flex;
   }
 }
+
+/* ==========================================================================
+   Accounts view: health, limits and ban rate (AccountsView, AccountsTable,
+   AccountsBanChart, AccountsLimitsForm). Keep account styles in this block.
+   ========================================================================== */
+
+.acc-stats {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.stat-value.neg {
+  color: var(--neg-ink);
+}
+
+.acc-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+  gap: 20px;
+  align-items: stretch;
+}
+
+.acc-chip {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+/* The line is drawn in a 100×100 box stretched to the chart; the stroke keeps its width. */
+.acc-line-chart {
+  cursor: crosshair;
+}
+
+.acc-line {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.acc-line path {
+  fill: none;
+  stroke: var(--vio);
+  stroke-width: 2px;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.acc-cross {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px solid var(--line3);
+  pointer-events: none;
+}
+
+.acc-marker {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  border-radius: 999px;
+  background: var(--vio);
+  box-shadow: 0 0 0 2px var(--card);
+  pointer-events: none;
+}
+
+.acc-by {
+  display: flex;
+  flex-direction: column;
+}
+
+.acc-by-row {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.acc-by-rate {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-weight: 600;
+}
+
+.acc-meter {
+  grid-column: 2 / -1;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--tint);
+  overflow: hidden;
+}
+
+.acc-meter > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--neg);
+}
+
+.acc-cell-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.acc-head-actions,
+.acc-actions,
+.acc-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.acc-head-actions {
+  flex-wrap: wrap;
+}
+
+.acc-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.acc-table-wrap {
+  overflow-x: auto;
+  margin: 0 -24px;
+  padding: 0 24px;
+}
+
+.acc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.acc-table th,
+.acc-table td {
+  padding: 12px 14px 12px 0;
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.acc-table tbody {
+  border-top: 1px solid var(--line);
+}
+
+.acc-table .acc-sub td {
+  padding-top: 0;
+}
+
+.acc-table thead th {
+  padding-top: 4px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--ink2);
+}
+
+.acc-table tbody th {
+  font-weight: 400;
+}
+
+.acc-table td:last-child,
+.acc-table th:last-child {
+  padding-right: 0;
+}
+
+.acc-table .acc-num {
+  text-align: right;
+}
+
+.acc-table tbody.is-dead .acc-handle {
+  color: var(--ink2);
+  text-decoration: line-through;
+  text-decoration-color: var(--line3);
+}
+
+.acc-who {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.acc-handle {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* width 0 + min-width 100%: a long error never widens the table, it is cut to it. */
+.acc-error {
+  display: block;
+  width: 0;
+  min-width: 100%;
+  padding-left: 34px; /* under the handle, past the platform icon */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  color: var(--neg-ink);
+}
+
+.acc-b-dead {
+  background: var(--neg-bg);
+  color: var(--neg-ink);
+}
+
+.acc-b-unknown {
+  background: var(--tint);
+  color: var(--ink2);
+}
+
+.acc-b-paused {
+  background: transparent;
+  border: 1px solid var(--line3);
+  color: var(--ink3);
+}
+
+@media (max-width: 1200px) {
+  .acc-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 860px) {
+  .acc-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ---------- end of Accounts view ---------- */
+
+/* ---------- drafts: the publishing queue ---------- */
+
+.drafts-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.4fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.drafts-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.draft-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: opacity 200ms var(--ease);
+}
+
+.draft-list.is-stale {
+  opacity: 0.6;
+}
+
+.draft-item {
+  appearance: none;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 200ms var(--ease),
+    background-color 200ms var(--ease);
+}
+
+.draft-item:hover {
+  border-color: var(--line3);
+}
+
+.draft-item.is-on {
+  border-color: var(--ink2);
+  background: var(--card-hi);
+}
+
+.draft-item-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.draft-where {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.draft-when {
+  margin-left: auto;
+  flex: none;
+}
+
+.draft-item-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 14px;
+  color: var(--ink3);
+  overflow-wrap: anywhere;
+}
+
+.draft-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.draft-status {
+  background: var(--tint);
+  color: var(--ink3);
+}
+
+.draft-status.st-approved {
+  background: #221b3d;
+  color: var(--vio-ink);
+}
+
+.draft-status.st-publishing {
+  background: var(--mari);
+  color: #000;
+}
+
+.draft-status.st-published {
+  background: var(--pos-bg);
+  color: var(--pos);
+}
+
+.draft-status.st-failed,
+.draft-status.st-removed {
+  background: var(--neg-bg);
+  color: var(--neg-ink);
+}
+
+.draft-status.st-skipped {
+  color: var(--ink2);
+}
+
+.drafts-none {
+  min-height: 160px;
+  justify-content: center;
+  align-items: center;
+}
+
+.draft-head {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.draft-head-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.draft-reply .link {
+  overflow-wrap: anywhere;
+}
+
+.draft-published {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.draft-removed {
+  display: block;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--neg-bg);
+  color: var(--neg-ink);
+}
+
+.draft-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.draft-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.draft-count {
+  font-weight: 500;
+  color: var(--ink2);
+}
+
+.draft-count.is-over {
+  color: var(--neg-ink);
+  font-weight: 600;
+}
+
+.draft-body {
+  font-family: var(--font-body);
+  font-size: 15px;
+}
+
+.draft-plan {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--tint-lo);
+  color: var(--ink3);
+}
+
+.draft-plan .dot {
+  transform: translateY(-1px);
+}
+
+.draft-advice {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.warn-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.warn-item {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--tint-lo);
+  font-size: 13.5px;
+  color: var(--ink3);
+  overflow-wrap: anywhere;
+}
+
+.warn-item > span:first-child {
+  font-weight: 700;
+  color: var(--mari);
+}
+
+.warn-item.w-community_bans_promo,
+.warn-item.w-duplicate,
+.warn-item.w-self_promo {
+  background: #2a2210;
+  color: #ffe1a3;
+}
+
+.warn-item.w-subreddit_rules > span:first-child {
+  color: var(--ink2);
+}
+
+.draft-rules summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  margin-bottom: 8px;
+}
+
+.draft-actions {
+  align-items: center;
+  padding-top: 4px;
+}
+
+@media (max-width: 1100px) {
+  .drafts-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ---------- end drafts ---------- */
+
+/* ---------- project account pool (ProjectAccounts) ---------- */
+
+.pool-row {
+  align-items: start;
+}
+
+.pool-row .binding-name,
+.pool-body > .muted {
+  padding-top: 8px;
+}
+
+.pool-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pool-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pool-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 4px 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card-hi);
+}
+
+.pool-handle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+}
+
+.pool-item .acc-badges {
+  flex: none;
+}
+
+.pool-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}

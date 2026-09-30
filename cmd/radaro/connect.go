@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
@@ -76,23 +77,95 @@ func (a *app) connectCmd() *cobra.Command {
 		Long: "Create an app at https://www.reddit.com/prefs/apps (type \"web app\" or \"installed app\")\n" +
 			"with the redirect URI <server>/oauth/reddit/callback (this command prints it), then run\n" +
 			"  radaro connect reddit --client-id <id>\n" +
-			"You will be asked for the app secret (empty for an installed app) and sent to Reddit to approve access.",
+			"You will be asked for the app secret (empty for an installed app) and sent to Reddit to approve access.\n" +
+			"After one Reddit account is connected, run without --client-id to reuse its app for another account.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if clientID == "" {
-				return errors.New("--client-id is required")
-			}
-			secret, err := readSecret("Client secret (empty for an installed app): ")
-			if err != nil && !errors.Is(err, errEmptySecret) {
-				return err
+			secret := ""
+			if clientID != "" {
+				var err error
+				secret, err = readSecret("Client secret (empty for an installed app): ")
+				if err != nil && !errors.Is(err, errEmptySecret) {
+					return err
+				}
 			}
 			return a.connectReddit(cmd.Context(), clientID, secret, project)
 		},
 	}
 	reddit.Flags().StringVar(&clientID, "client-id", "", "your Reddit app's client id")
 
-	cmd.AddCommand(bsky, masto, devto, reddit)
+	cmd.AddCommand(bsky, masto, devto, reddit, a.connectImportCmd(&project))
 	return cmd
+}
+
+type importResult struct {
+	Row       int    `json:"row"`
+	Platform  string `json:"platform,omitempty"`
+	Handle    string `json:"handle,omitempty"`
+	Status    string `json:"status"`
+	AccountID int64  `json:"account_id,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+type importAnswer struct {
+	Results []importResult `json:"results"`
+	Added   int            `json:"added"`
+	Updated int            `json:"updated"`
+	Errors  int            `json:"errors"`
+}
+
+func (a *app) connectImportCmd(project *int64) *cobra.Command {
+	return &cobra.Command{
+		Use:   "import <file|->",
+		Short: "Import publishing accounts from a file or stdin",
+		Long: "Send an account list to the signed-in server for import. Use - to read stdin. " +
+			"Each row's result is shown without credentials; --json prints the full result.",
+		Args: cobra.ExactArgs(1),
+		RunE: a.apiCmd(func(ctx context.Context, c *client.Client, args []string) error {
+			if *project != 0 {
+				return errors.New("--project is not supported by connect import")
+			}
+			var data []byte
+			var err error
+			if args[0] == "-" {
+				data, err = io.ReadAll(stdin)
+			} else {
+				data, err = os.ReadFile(args[0])
+			}
+			if err != nil {
+				return fmt.Errorf("read account list: %w", err)
+			}
+			if len(strings.TrimSpace(string(data))) == 0 {
+				return errors.New("account list is empty")
+			}
+			var res importAnswer
+			if err := c.Do(ctx, "POST", "/api/accounts/import", nil, map[string]string{"text": string(data)}, &res); err != nil {
+				return err
+			}
+			if a.jsonFlag {
+				if err := printJSON(res); err != nil {
+					return err
+				}
+			} else {
+				for _, row := range res.Results {
+					if row.Error != "" {
+						if strings.HasPrefix(row.Error, fmt.Sprintf("row %d:", row.Row)) {
+							fmt.Printf("! %s\n", row.Error)
+						} else {
+							fmt.Printf("! row %d: %s\n", row.Row, row.Error)
+						}
+						continue
+					}
+					fmt.Printf("%s row %d: %s %s\n", row.Status, row.Row, row.Platform, row.Handle)
+				}
+				fmt.Printf("%d added, %d updated, %d errors\n", res.Added, res.Updated, res.Errors)
+			}
+			if res.Errors > 0 {
+				return exitError{1}
+			}
+			return nil
+		}),
+	}
 }
 
 // connect sends the key to the server, which checks it with the platform.

@@ -5,8 +5,8 @@ import type { AccountsResponse, Platform, Project } from "../types";
 import { fmtNum } from "../format";
 import { ErrorLine, Loading } from "./Status";
 import { ConnectForm, RedditForm } from "./ConnectForms";
+import { ProjectAccounts } from "./ProjectAccounts";
 import { Modal } from "./ui/Modal";
-import { Select } from "./ui/Select";
 
 interface Props {
   projects: AsyncState<Project[]>;
@@ -25,7 +25,7 @@ function splitKeywords(raw: string): string[] {
     .filter(Boolean);
 }
 
-export function ProjectsPanel({ projects, selectedId, accounts, rev, onSelect, onChanged }: Props) {
+export function ProjectsPanel({ projects, selectedId, accounts, rev, onSelect, onChanged }: Readonly<Props>) {
   const id = useId();
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -114,16 +114,15 @@ function ProjectDetail({
   rev,
   onSelect,
   onChanged,
-}: {
+}: Readonly<{
   project: Project;
   accounts: AsyncState<AccountsResponse>;
   rev: number;
   onSelect: (id: number | null) => void;
   onChanged: () => void;
-}) {
+}>) {
   const id = useId();
   const keywords = useAsync((s) => api.keywords(project.id, s), [project.id, rev]);
-  const bindings = useAsync((s) => api.projectAccounts(project.id, s), [project.id, rev]);
   const [draft, setDraft] = useState("");
   const [renaming, setRenaming] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -170,7 +169,6 @@ function ProjectDetail({
     });
   };
 
-  const own = accounts.data?.accounts ?? [];
   const pending = draft ? splitKeywords(draft).length : 0;
 
   return (
@@ -254,42 +252,15 @@ function ProjectDetail({
         )}
       </div>
 
-      <div className="project-block">
-        <h4 className="block-title">Accounts</h4>
-        <p className="muted small">The account this project publishes with — and, for Reddit and Mastodon, scans with.</p>
-        <ErrorLine error={bindings.error ?? accounts.error} />
-        {bindings.loading && !bindings.data && <Loading label="Loading accounts" />}
-        <ul className="binding-list">
-          {(bindings.data ?? []).map((b) => {
-            const options = own.filter((a) => a.platform === b.platform.name);
-            return (
-              <li key={b.platform.name} className="binding-row">
-                <span className="strong small binding-name">{b.platform.label}</span>
-                {options.length > 0 ? (
-                  <Select
-                    label={`${b.platform.label} account for ${project.name}`}
-                    value={b.account ? String(b.account.id) : ""}
-                    disabled={busy}
-                    onChange={(v) =>
-                      void act(async () => {
-                        if (v) await api.bindAccount(project.id, b.platform.name, Number(v));
-                        else await api.unbindAccount(project.id, b.platform.name);
-                        onChanged();
-                      })
-                    }
-                    options={[{ value: "", label: "No account" }, ...options.map((a) => ({ value: String(a.id), label: a.handle }))]}
-                  />
-                ) : (
-                  <span className="muted small">No {b.platform.label} account yet</span>
-                )}
-                <button type="button" className="btn ghost sm" disabled={busy} onClick={() => setConnect(b.platform)}>
-                  Connect new
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      </div>
+      <ProjectAccounts
+        projectId={project.id}
+        projectName={project.name}
+        own={accounts.data?.accounts ?? []}
+        ownError={accounts.error}
+        rev={rev}
+        onConnect={setConnect}
+        onChanged={onChanged}
+      />
 
       <ErrorLine error={error} />
 

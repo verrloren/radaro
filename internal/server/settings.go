@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -15,7 +16,6 @@ import (
 
 	"github.com/verrloren/radaro/internal/publish"
 	"github.com/verrloren/radaro/internal/sources"
-	"github.com/verrloren/radaro/internal/store"
 )
 
 // --- source settings ----------------------------------------------------------
@@ -165,16 +165,7 @@ func (s *Server) deleteSourceSettings(w http.ResponseWriter, r *http.Request) {
 	s.writeSourceSettings(w, name)
 }
 
-// --- publishing accounts ------------------------------------------------------
-
-func (s *Server) accounts(w http.ResponseWriter, r *http.Request) {
-	accs, err := s.store.Accounts(userID(r), "")
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"platforms": publish.Platforms, "accounts": accs})
-}
+// --- publishing accounts (health, limits and stats: accounts_api.go) ----------
 
 func (s *Server) connectAccount(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -222,7 +213,7 @@ func (s *Server) connectAccount(w http.ResponseWriter, r *http.Request) {
 func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseID(chi.URLParam(r, "id"))
 	if !ok {
-		writeError(w, http.StatusUnprocessableEntity, "invalid account id")
+		writeError(w, http.StatusUnprocessableEntity, errInvalidAccount)
 		return
 	}
 	deleted, err := s.store.DeleteAccount(userID(r), id)
@@ -231,7 +222,7 @@ func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !deleted {
-		writeError(w, http.StatusNotFound, "account not found")
+		writeError(w, http.StatusNotFound, errAccountNotFound)
 		return
 	}
 	_ = s.store.LogActivity(userID(r), "account.removed", 0, "account "+strconv.FormatInt(id, 10))
@@ -305,9 +296,18 @@ func (s *Server) redditAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.ClientID = strings.TrimSpace(body.ClientID)
+	body.ClientSecret = strings.TrimSpace(body.ClientSecret)
 	if body.ClientID == "" {
-		writeError(w, http.StatusUnprocessableEntity, "client_id is required")
-		return
+		app, err := s.savedRedditApp(userID(r))
+		if err != nil {
+			internalError(w, err)
+			return
+		}
+		if app == nil {
+			writeError(w, http.StatusUnprocessableEntity, "connect a Reddit account first, or enter a client ID")
+			return
+		}
+		body.ClientID, body.ClientSecret = app.ClientID, app.ClientSecret
 	}
 	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {
@@ -319,13 +319,38 @@ func (s *Server) redditAuthorize(w http.ResponseWriter, r *http.Request) {
 	s.oauth.put(state, pendingOAuth{
 		userID:    userID(r),
 		projectID: body.ProjectID,
-		creds:     publish.RedditCredentials{ClientID: body.ClientID, ClientSecret: strings.TrimSpace(body.ClientSecret), RedirectURI: redirect},
+		creds:     publish.RedditCredentials{ClientID: body.ClientID, ClientSecret: body.ClientSecret, RedirectURI: redirect},
 		expires:   time.Now().Add(10 * time.Minute),
 	})
 	writeJSON(w, http.StatusOK, map[string]string{
 		"authorize_url": publish.RedditAuthorizeURL(body.ClientID, redirect, state),
 		"redirect_uri":  redirect,
 	})
+}
+
+// savedRedditApp reuses the app credentials in the user's first connected
+// Reddit account. Only its presence is exposed to the page, never its secret.
+func (s *Server) savedRedditApp(uid int64) (*publish.RedditCredentials, error) {
+	accounts, err := s.store.Accounts(uid, "reddit")
+	if err != nil {
+		return nil, err
+	}
+	for _, account := range accounts {
+		var creds publish.RedditCredentials
+		if json.Unmarshal(account.Credentials, &creds) == nil && creds.ClientID != "" {
+			return &creds, nil
+		}
+	}
+	return nil, nil
+}
+
+func (s *Server) redditApp(w http.ResponseWriter, r *http.Request) {
+	app, err := s.savedRedditApp(userID(r))
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"configured": app != nil})
 }
 
 // redditCallback finishes the sign-in and sends the browser back to Setup.
@@ -368,85 +393,4 @@ func (s *Server) redditCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.LogActivity(p.userID, "account.connected", 0, "reddit "+rd.Creds.Username)
 	back("connected", "reddit")
-}
-
-// --- project accounts -----------------------------------------------------------
-
-type bindingView struct {
-	Platform publish.Platform `json:"platform"`
-	Account  *store.Account   `json:"account"` // null: nothing bound
-}
-
-// projectAccounts lists every platform with the project's account, if any.
-func (s *Server) projectAccounts(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(w, r)
-	if !ok {
-		return
-	}
-	s.writeBindings(w, r, id)
-}
-
-func (s *Server) writeBindings(w http.ResponseWriter, r *http.Request, projectID int64) {
-	bound, err := s.store.ProjectBindings(userID(r), projectID)
-	if err != nil {
-		storeError(w, err, http.StatusInternalServerError)
-		return
-	}
-	out := make([]bindingView, len(publish.Platforms))
-	for i, p := range publish.Platforms {
-		out[i].Platform = p
-		for _, b := range bound {
-			if b.Platform == p.Name {
-				out[i].Account = b.Account
-			}
-		}
-	}
-	writeJSON(w, http.StatusOK, out)
-}
-
-func (s *Server) bindAccount(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(w, r)
-	if !ok || !s.ownProject(w, r, id) {
-		return
-	}
-	platform := chi.URLParam(r, "platform")
-	var body struct {
-		AccountID int64 `json:"account_id"`
-	}
-	if !decode(w, r, &body) {
-		return
-	}
-	acc, err := s.store.Account(userID(r), body.AccountID)
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-	if acc == nil {
-		writeError(w, http.StatusNotFound, "account not found")
-		return
-	}
-	if acc.Platform != platform {
-		writeError(w, http.StatusUnprocessableEntity, "account "+strconv.FormatInt(acc.ID, 10)+" is not a "+platform+" account")
-		return
-	}
-	if _, err := s.store.BindAccount(userID(r), id, acc.ID); err != nil {
-		storeError(w, err, http.StatusInternalServerError)
-		return
-	}
-	_ = s.store.LogActivity(userID(r), "account.bound", 0, platform+" "+acc.Handle+" to project "+strconv.FormatInt(id, 10))
-	s.writeBindings(w, r, id)
-}
-
-func (s *Server) unbindAccount(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(w, r)
-	if !ok {
-		return
-	}
-	platform := chi.URLParam(r, "platform")
-	if _, err := s.store.UnbindAccount(userID(r), id, platform); err != nil {
-		storeError(w, err, http.StatusInternalServerError)
-		return
-	}
-	_ = s.store.LogActivity(userID(r), "account.unbound", 0, platform+" from project "+strconv.FormatInt(id, 10))
-	s.writeBindings(w, r, id)
 }

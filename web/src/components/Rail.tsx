@@ -1,10 +1,11 @@
+import type { ReactNode } from "react";
 import type { Selection } from "../App";
 import type { AsyncState } from "../hooks";
 import type { Meta, Project, User } from "../types";
 import { fmtNum } from "../format";
 import { Select } from "./ui/Select";
 
-export type View = "listen" | "scan" | "setup";
+export type View = "listen" | "scan" | "drafts" | "accounts" | "setup";
 
 interface Props {
   projects: AsyncState<Project[]>;
@@ -22,7 +23,73 @@ interface Props {
   onSignOut: () => void;
 }
 
-export function Rail({ projects, keywords, keywordsLoading, keywordsError, sel, onSelect, view, onView, total, needSetup, meta, user, onSignOut }: Props) {
+function Icon({ children }: Readonly<{ children: ReactNode }>) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      {children}
+    </svg>
+  );
+}
+
+const NAV: readonly { view: View; name: string; sub: string; icon: ReactNode }[] = [
+  { view: "listen", name: "Listen", sub: "Overview and mentions", icon: <path d="M3 12h4l3-8 4 16 3-8h4" /> },
+  {
+    view: "scan",
+    name: "Scan",
+    sub: "Pull new mentions",
+    icon: (
+      <>
+        <path d="M19.07 4.93A10 10 0 1 0 22 12" />
+        <path d="M16.24 7.76A6 6 0 1 0 18 12" />
+        <path d="M12 12l6.5-6.5" />
+      </>
+    ),
+  },
+  {
+    view: "drafts",
+    name: "Drafts",
+    sub: "Review and publish",
+    icon: (
+      <>
+        <path d="M4 20h4L19 9l-4-4L4 16v4z" />
+        <path d="M13 7l4 4" />
+      </>
+    ),
+  },
+  {
+    view: "accounts",
+    name: "Accounts",
+    sub: "Health, limits, ban rate",
+    icon: (
+      <>
+        <circle cx="9" cy="8" r="3" />
+        <path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6" />
+        <path d="M16 11l2 2 4-4" />
+      </>
+    ),
+  },
+  {
+    view: "setup",
+    name: "Setup",
+    sub: "Sources, accounts, projects",
+    icon: (
+      <>
+        <path d="M4 7h10M18 7h2M4 17h4M12 17h8" />
+        <circle cx="16" cy="7" r="2" />
+        <circle cx="10" cy="17" r="2" />
+      </>
+    ),
+  },
+];
+
+/** What a section shows next to its name: the mention total, or how many sources need setup. */
+function navExtra(view: View, total: number | undefined, needSetup: number): ReactNode {
+  if (view === "listen" && total !== undefined) return <span className="nav-count">{fmtNum(total)}</span>;
+  if (view === "setup" && needSetup > 0) return <span className="badge b-mari">{needSetup} need setup</span>;
+  return null;
+}
+
+export function Rail({ projects, keywords, keywordsLoading, keywordsError, sel, onSelect, view, onView, total, needSetup, meta, user, onSignOut }: Readonly<Props>) {
   const kw = keywords ?? [];
   const kwOptions = sel.q && !kw.includes(sel.q) ? [sel.q, ...kw] : kw;
   const projectMissing = sel.p !== null && projects.data && !projects.data.some((p) => p.id === sel.p);
@@ -84,49 +151,29 @@ export function Rail({ projects, keywords, keywordsLoading, keywordsError, sel, 
       </div>
 
       <nav className="nav" aria-label="Sections">
-        <button type="button" className={`nav-item nav-listen${view === "listen" ? " is-on" : ""}`} aria-current={view === "listen" ? "page" : undefined} onClick={() => onView("listen")}>
-          <span className="nav-ico" aria-hidden="true">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 12h4l3-8 4 16 3-8h4" />
-            </svg>
-          </span>
-          <span className="nav-text">
-            <span className="nav-name">
-              Listen
-              {total !== undefined && <span className="nav-count">{fmtNum(total)}</span>}
-            </span>
-            <span className="nav-sub">Overview and mentions</span>
-          </span>
-        </button>
-        <button type="button" className={`nav-item nav-scan${view === "scan" ? " is-on" : ""}`} aria-current={view === "scan" ? "page" : undefined} onClick={() => onView("scan")}>
-          <span className="nav-ico" aria-hidden="true">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <path d="M19.07 4.93A10 10 0 1 0 22 12" />
-              <path d="M16.24 7.76A6 6 0 1 0 18 12" />
-              <path d="M12 12l6.5-6.5" />
-            </svg>
-          </span>
-          <span className="nav-text">
-            <span className="nav-name">Scan</span>
-            <span className="nav-sub">Pull new mentions</span>
-          </span>
-        </button>
-        <button type="button" className={`nav-item nav-setup${view === "setup" ? " is-on" : ""}`} aria-current={view === "setup" ? "page" : undefined} onClick={() => onView("setup")}>
-          <span className="nav-ico" aria-hidden="true">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <path d="M4 7h10M18 7h2M4 17h4M12 17h8" />
-              <circle cx="16" cy="7" r="2" />
-              <circle cx="10" cy="17" r="2" />
-            </svg>
-          </span>
-          <span className="nav-text">
-            <span className="nav-name">
-              Setup
-              {needSetup > 0 && <span className="badge b-mari">{needSetup} need setup</span>}
-            </span>
-            <span className="nav-sub">Sources, accounts, projects</span>
-          </span>
-        </button>
+        {NAV.map((n) => {
+          const on = view === n.view;
+          return (
+            <button
+              key={n.view}
+              type="button"
+              className={`nav-item nav-${n.view}${on ? " is-on" : ""}`}
+              aria-current={on ? "page" : undefined}
+              onClick={() => onView(n.view)}
+            >
+              <span className="nav-ico" aria-hidden="true">
+                <Icon>{n.icon}</Icon>
+              </span>
+              <span className="nav-text">
+                <span className="nav-name">
+                  {n.name}
+                  {navExtra(n.view, total, needSetup)}
+                </span>
+                <span className="nav-sub">{n.sub}</span>
+              </span>
+            </button>
+          );
+        })}
       </nav>
 
       <div className="rail-foot">

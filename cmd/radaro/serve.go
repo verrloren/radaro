@@ -13,6 +13,7 @@ import (
 
 	"github.com/verrloren/radaro/internal/alerts"
 	"github.com/verrloren/radaro/internal/model"
+	"github.com/verrloren/radaro/internal/outbox"
 	"github.com/verrloren/radaro/internal/pipeline"
 	"github.com/verrloren/radaro/internal/server"
 	"github.com/verrloren/radaro/internal/store"
@@ -53,6 +54,11 @@ func (a *app) runServer(ctx context.Context, st *store.Store, host string, port 
 	if err != nil {
 		return err
 	}
+	ob := api.Outbox()
+	ob.Notify = pipeline.AccountNotifier(a.cfg)
+	ob.Logf = func(format string, args ...any) { stderr("  ! "+format+"\n", args...) }
+	stopChecks := a.startAccountChecks(ctx, ob)
+	defer stopChecks()
 	srv := &http.Server{
 		Addr:              net.JoinHostPort(host, strconv.Itoa(port)),
 		Handler:           api.Handler(),
@@ -69,6 +75,20 @@ func (a *app) runServer(ctx context.Context, st *store.Store, host string, port 
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
 	}
+}
+
+// startAccountChecks waits for a check in flight before the store is closed.
+func (a *app) startAccountChecks(ctx context.Context, ob *outbox.Service) func() {
+	if a.cfg.AccountCheckInterval <= 0 {
+		return func() {}
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ob.Run(ctx, a.cfg.AccountCheckInterval)
+	}()
+	return func() { cancel(); <-done }
 }
 
 func (a *app) testAlertCmd() *cobra.Command {

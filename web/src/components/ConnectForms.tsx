@@ -1,5 +1,6 @@
 import { useId, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../api";
+import { useAsync } from "../hooks";
 import type { Platform, SourceSettings } from "../types";
 import { ErrorLine } from "./Status";
 
@@ -172,28 +173,58 @@ export function ConnectForm({ platform, projectId, onDone }: { platform: Platfor
 export function RedditForm({ projectId }: { projectId?: number }) {
   const id = useId();
   const redirect = `${window.location.origin}/oauth/reddit/callback`;
+  const app = useAsync((signal) => api.redditApp(signal), []);
   const [clientId, setClientId] = useState("");
   const [secret, setSecret] = useState("");
+  const [authorizeUrl, setAuthorizeUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
+  const authorize = async () => {
     setBusy(true);
     setError(null);
     try {
-      const res = await api.redditAuthorize(clientId.trim(), secret.trim(), projectId);
-      window.location.assign(res.authorize_url);
+      const res = await api.redditAuthorize(app.data?.configured ? "" : clientId.trim(), app.data?.configured ? "" : secret.trim(), projectId);
+      if (app.data?.configured) setAuthorizeUrl(res.authorize_url);
+      else window.location.assign(res.authorize_url);
     } catch (err) {
       setError(errorMessage(err));
       setBusy(false);
     }
   };
 
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    void authorize();
+  };
+
   const copy = () => {
     void navigator.clipboard?.writeText(redirect).then(() => setCopied(true));
   };
+
+  if (app.loading && !app.data) return <p className="muted small">Loading Reddit app…</p>;
+  if (app.error && !app.data) return <ErrorLine error={app.error} />;
+
+  if (app.data?.configured) {
+    return (
+      <div className="setup-form">
+        <p className="muted small">The Reddit app is saved. To connect a different Reddit account, open the authorization link in a private window and sign in to that account there.</p>
+        <ErrorLine error={error} />
+        {authorizeUrl ? (
+          <div className="field">
+            <a className="link-btn" href={authorizeUrl} target="_blank" rel="noopener noreferrer">Open Reddit authorization</a>
+            <p className="muted small">For a different account, copy this link and open it in a private window:</p>
+            <input type="text" readOnly aria-label="Reddit authorization link" value={authorizeUrl} onFocus={(e) => e.currentTarget.select()} />
+          </div>
+        ) : (
+          <button type="button" className="btn primary sm" disabled={busy} onClick={() => void authorize()}>
+            {busy ? "Preparing link…" : "Add another Reddit account"}
+          </button>
+        )}
+      </div>
+    );
+  }
 
   return (
     <form className="setup-form" onSubmit={(e) => void submit(e)} aria-label="Connect Reddit">

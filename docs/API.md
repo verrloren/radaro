@@ -259,9 +259,10 @@ does not exist.
 | GET | `/api/projects/{id}/keywords` | — | `Keyword[]`, oldest first |
 | POST | `/api/projects/{id}/keywords` | `{"query"?: string, "queries"?: string[], "sources"?: string[]}` | `201` (`200` when nothing was new) `{"added": number, "keywords": Keyword[]}`. Keywords already in the project, in any letter case, are skipped. New keywords scan `sources`, default the instance's `RADARO_SOURCES`. `409` beyond 500 keywords per project |
 | DELETE | `/api/projects/{id}/keywords/{kid}` | — | `{"deleted": true}`; the keyword's mentions stay |
-| GET | `/api/projects/{id}/accounts` | — | `ProjectAccount[]`, one per publishing platform |
-| PUT | `/api/projects/{id}/accounts/{platform}` | `{"account_id": number}` | `ProjectAccount[]`; replaces the project's account for that platform; `404` unknown account, `422` account of another platform |
-| DELETE | `/api/projects/{id}/accounts/{platform}` | — | `ProjectAccount[]` |
+| GET | `/api/projects/{id}/accounts` | — | `ProjectPool[]`, one per publishing platform, each with an `accounts` array |
+| PUT | `/api/projects/{id}/accounts/{platform}` | `{"account_id": number}` | `ProjectPool[]`; adds the account to the pool, `404` unknown account, `422` account of another platform |
+| DELETE | `/api/projects/{id}/accounts/{platform}` | — | `ProjectPool[]`; empties that platform's pool |
+| DELETE | `/api/projects/{id}/accounts/{platform}/{account_id}` | — | `ProjectPool[]`; removes only that account from the pool |
 | GET | `/api/summary` | `?q=` or `?p=` (mutually exclusive; neither = everything) | `{"summary": Summary, "timeseries": TimeseriesPoint[], "net": number, "themes": Theme[]}` |
 | GET | `/api/mentions` | `?q=` or `?p=`, `&source=`, `&sentiment=`, `&limit=` (1–1000, default 200) | `Mention[]`, newest first |
 | POST | `/api/track` | `{"query": string, "sources"?: string[], "mode": "incremental" \| "backfill", "pages": number, "limit"?: number, "project_id"?: number}` | `TrackResult` (may take minutes). Without `sources`, the keyword's own, else `RADARO_SOURCES`; `limit` (1–100) is items per source page. The keyword is filed under `project_id`, or stays where it is, or goes to Default |
@@ -269,22 +270,33 @@ does not exist.
 | GET | `/api/export` | `?q=` or `?p=` | every `Mention` in scope, complete (for backups and CSV) |
 | GET | `/api/opportunities` | `?q=` or `?p=`, `&days=` (1–365, default 14), `&limit=` (1–200, default 20), `&source=` | `Mention[]`: recent mentions with a link and no draft yet |
 | GET | `/api/drafts` | `?status=`, `&limit=` (1–1000, default 50) | `Draft[]`, newest first |
+| GET | `/api/drafts/counts` | — | counts by draft status, including zeroes |
 | POST | `/api/drafts` | `{"platform": string, "body": string, "project_id"?, "account_id"?, "kind"?: "post" \| "reply", "community"?, "title"?, "reply_to"?, "query"?, "mention_id"?}` | `201 Draft`. With `mention_id` and no `reply_to`, a reply answers the mention's thread on the same platform. `422` when the platform's rules reject it |
-| GET | `/api/drafts/{id}` | — | `Draft` |
-| PATCH | `/api/drafts/{id}` | `{"title"?, "body"?, "community"?}` | `Draft`, back in review (`draft`); `409` once published |
-| POST | `/api/drafts/{id}/approve` | — | `Draft` (`approved`); `422` if the platform would reject it |
+| GET | `/api/drafts/{id}` | — | `Draft` with `plan` (selected account, quota, next possible time and reason) |
+| PATCH | `/api/drafts/{id}` | `{"title"?, "body"?, "community"?, "account_id"?: number \| null}` | `Draft` with `plan`, back in review (`draft`); `null` restores automatic account selection; `409` once published |
+| GET | `/api/drafts/{id}/warnings` | — | `DraftWarning[]` for self-promotion, duplicate posts and subreddit rules; warnings advise but do not block publishing |
+| POST | `/api/drafts/{id}/approve` | — | `Draft` with `plan` (`approved`); `422` if the platform would reject it |
 | POST | `/api/drafts/{id}/skip` | — | `Draft` (`skipped`) |
-| POST | `/api/drafts/{id}/publish` | — | `Draft` (`published`). Only `approved` drafts (`409` otherwise); the draft is claimed (`publishing`) before any network call. `502 {"error", "draft"}` when the platform fails (`failed`, approve again to retry) |
+| POST | `/api/drafts/{id}/publish` | — | `{"draft": Draft, "account": Account}`. Only `approved` drafts (`409` otherwise); the draft is claimed (`publishing`) before any network call. A limit returns `409 {"error", "draft", "account", "next_at"}` without publishing; a platform failure returns `502` and marks the draft `failed` |
 | GET | `/api/stats` | `?refresh=true` fetches fresh metrics | `{"published": Draft[], "errors": string[]}` |
 | GET | `/api/activity` | `?limit=` (1–1000, default 50) | `Activity[]`, newest first |
 | GET | `/api/status` | — | the user, sources, accounts, keywords and draft counts; the admin also sees the database path |
 | GET | `/api/settings/sources` | — | `SourceSettings[]` for the sources that take keys (RSS, X, YouTube); Reddit and Mastodon scan with a connected account instead |
 | PUT | `/api/settings/sources/{name}` | `{"values": Record<string, string>}` | admin only (`403` otherwise). `SourceSettings`; a blank secret keeps the saved one, all blank removes the saved settings; `422` unknown field; `404` source without settings |
 | DELETE | `/api/settings/sources/{name}` | — | admin only. `SourceSettings` after falling back to the environment |
-| GET | `/api/accounts` | — | `{"platforms": Platform[], "accounts": Account[]}` |
+| GET | `/api/settings/proxy` | — | admin only. `{"configured": boolean, "origin": "ui" \| "env" \| ""}`; never returns the proxy URL, which may contain credentials |
+| PUT | `/api/settings/proxy` | `{"url": "http://host:port"}` (also HTTPS or SOCKS5) | admin only. Saves one instance-wide outbound proxy for scans and publishing, active without restart; `422` invalid URL |
+| DELETE | `/api/settings/proxy` | — | admin only. Clears the saved proxy and restores `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` from the server environment |
+| GET | `/api/accounts` | — | `{"platforms": Platform[], "accounts": AccountView[]}` with health, limits, quota and activity for this user |
 | POST | `/api/accounts` | `{"platform": "bluesky" \| "mastodon" \| "devto", "handle"?: string, "instance"?: string, "secret": string, "project_id"?: number}` | `201 Account` once the platform accepts the key, bound to `project_id` when given; `422` with the platform's refusal |
+| POST | `/api/accounts/import` | `{"text": string}` containing CSV or a JSON array | `{"added": number, "updated": number, "errors": number, "results": [{"row", "platform", "handle", "status", "account_id"?, "error"?}]}`; up to 500 rows, at most three credential checks at once, row errors do not stop valid rows, no secrets returned; Reddit rows direct the user to browser sign-in |
+| PATCH | `/api/accounts/{id}` | `{"paused"?: boolean, "daily_limit"?: number, "min_interval_sec"?: number, "community_cooldown_h"?: number}` | `AccountView`; a limit of `0` restores its platform default |
+| POST | `/api/accounts/{id}/check` | — | `AccountView` with refreshed health; `502` if the check could not run |
+| POST | `/api/accounts/check` | — | account list after checking this user's accounts; per-account failures are reported in `error` and `errors` |
+| GET | `/api/accounts/stats` | `?days=` (1–90, default 30) | status totals and daily ban-rate series for this user's accounts |
 | DELETE | `/api/accounts/{id}` | — | `{"deleted": true}`; drafts keep their text |
-| POST | `/api/accounts/reddit/authorize` | `{"client_id": string, "client_secret"?: string, "project_id"?: number}` | `{"authorize_url": string, "redirect_uri": string}` — open `authorize_url`; the state is single use and expires in 10 minutes |
+| POST | `/api/accounts/reddit/authorize` | `{"client_id"?: string, "client_secret"?: string, "project_id"?: number}` | `{"authorize_url": string, "redirect_uri": string}` — open `authorize_url`; omitted client ID reuses the user's first connected Reddit account's app; the state is single use and expires in 10 minutes |
+| GET | `/api/accounts/reddit/app` | — | `{"configured": boolean}` for this user's reusable Reddit app; no app secret returned |
 | GET | `/oauth/reddit/callback` | Reddit's `?state=&code=` | `303` to `/?v=setup&connected=reddit`, or `&connect_error=<message>` |
 
 `net` is `(positive − negative) / total`, in `[-1, 1]`.

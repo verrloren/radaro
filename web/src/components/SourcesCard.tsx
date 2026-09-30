@@ -7,6 +7,7 @@ import { ago, fmtDateTime } from "../format";
 import { SourceIcon } from "./SourceBadge";
 import { ErrorLine, Loading } from "./Status";
 import { ConnectForm, RedditForm, SourceForm } from "./ConnectForms";
+import { AccountImportForm } from "./AccountImportForm";
 import { Modal } from "./ui/Modal";
 
 // What each listen-only source does once ready, and where its keys come from.
@@ -28,7 +29,7 @@ interface Row {
   accounts: Account[];
 }
 
-type Dialog = { kind: "source"; settings: SourceSettings } | { kind: "account"; platform: Platform };
+type Dialog = { kind: "source"; settings: SourceSettings } | { kind: "account"; platform: Platform } | { kind: "import" };
 
 function describe(r: Row): string {
   const connected = r.accounts.length > 0;
@@ -111,7 +112,10 @@ export function SourcesCard({ isAdmin, meta, settings, accounts, notice, trackin
         <h2 id="sources-h" className="card-title lg">
           Sources and accounts
         </h2>
-        <span className="muted small">{q ? `last scans for “${q}”` : "Scans run on the server"}</span>
+        <span className="acc-head-actions">
+          <span className="muted small">{q ? `last scans for “${q}”` : "Scans run on the server"}</span>
+          <button type="button" className="btn ghost sm" onClick={() => setDialog({ kind: "import" })}>Import accounts</button>
+        </span>
       </div>
       <p className="muted small">
         Your accounts are yours alone; a Reddit or Mastodon account both scans and posts, and each project picks which account it uses. Source keys (RSS, X, YouTube)
@@ -202,6 +206,11 @@ export function SourcesCard({ isAdmin, meta, settings, accounts, notice, trackin
       {dialog?.kind === "account" && (
         <Modal title={`Connect ${dialog.platform.label}`} onClose={() => setDialog(null)}>
           {dialog.platform.name === "reddit" ? <RedditForm /> : <ConnectForm platform={dialog.platform} onDone={done} />}
+        </Modal>
+      )}
+      {dialog?.kind === "import" && (
+        <Modal title="Import accounts" onClose={() => setDialog(null)}>
+          <AccountImportForm onChanged={onChanged} />
         </Modal>
       )}
     </section>

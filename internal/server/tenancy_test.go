@@ -100,7 +100,7 @@ func TestProjectAccountBindings(t *testing.T) {
 	}
 	var views []struct {
 		Platform struct{ Name string }
-		Account  *struct {
+		Accounts []struct {
 			ID     int64
 			Handle string
 		}
@@ -111,10 +111,10 @@ func TestProjectAccountBindings(t *testing.T) {
 			t.Fatalf("list %d %s", rec.Code, rec.Body)
 		}
 		for _, v := range views {
-			if v.Platform.Name == "mastodon" && (v.Account == nil || v.Account.Handle != want) {
-				t.Fatalf("project %d mastodon = %+v, want %s", pid, v.Account, want)
+			if v.Platform.Name == "mastodon" && (len(v.Accounts) != 1 || v.Accounts[0].Handle != want) {
+				t.Fatalf("project %d mastodon = %+v, want %s", pid, v.Accounts, want)
 			}
-			if v.Platform.Name == "reddit" && v.Account != nil {
+			if v.Platform.Name == "reddit" && len(v.Accounts) != 0 {
 				t.Fatal("reddit bound without asking")
 			}
 		}

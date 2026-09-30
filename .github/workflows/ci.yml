@@ -19,6 +19,7 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm --prefix web ci
+      - run: npm --prefix web test
       - run: npm --prefix web run build
       - name: web/dist is up to date
         run: git diff --exit-code -- web/dist || (echo "::error::web/dist is stale — run 'make web' and commit it" && exit 1)

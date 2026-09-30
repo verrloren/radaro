@@ -13,6 +13,9 @@ import { MentionsFeed } from "./components/MentionsFeed";
 import { EmptyState } from "./components/EmptyState";
 import { SourcesCard } from "./components/SourcesCard";
 import { ProjectsPanel } from "./components/ProjectsPanel";
+import { AccountsView } from "./components/AccountsView";
+import { DraftsView } from "./components/DraftsView";
+import { ProxySettingsForm } from "./components/ProxySettingsForm";
 import { ErrorLine, Loading } from "./components/Status";
 
 export interface Selection {
@@ -21,14 +24,15 @@ export interface Selection {
   v: View;
 }
 
-const VIEWS: readonly View[] = ["listen", "scan", "setup"];
+const VIEWS: ReadonlySet<string> = new Set<View>(["listen", "scan", "drafts", "accounts", "setup"]);
 
 function readUrl(): Selection {
   const sp = new URLSearchParams(window.location.search);
   const q = sp.get("q")?.trim() || null;
   const pRaw = sp.get("p");
   const pNum = pRaw ? Number.parseInt(pRaw, 10) : NaN;
-  return { q, p: Number.isFinite(pNum) && pNum > 0 ? pNum : null, v: VIEWS.includes(sp.get("v") as View) ? (sp.get("v") as View) : "listen" };
+  const v = sp.get("v") ?? "";
+  return { q, p: Number.isFinite(pNum) && pNum > 0 ? pNum : null, v: VIEWS.has(v) ? (v as View) : "listen" };
 }
 
 // The Reddit sign-in comes back as ?v=setup&connected=reddit or &connect_error=…
@@ -64,7 +68,7 @@ interface AppProps {
   onSignOut: () => void;
 }
 
-export default function App({ user, onSignOut }: AppProps) {
+export default function App({ user, onSignOut }: Readonly<AppProps>) {
   const [sel, setSel] = useState<Selection>(readUrl);
   const [rev, setRev] = useState(0);
   const refresh = useCallback(() => setRev((r) => r + 1), []);
@@ -155,7 +159,7 @@ export default function App({ user, onSignOut }: AppProps) {
       <main className="main">
         <p className="crumb">{crumb}</p>
 
-        {sel.v === "listen" ? (
+        {sel.v === "listen" && (
           <section className="view" aria-label="Listen" key="listen">
             {empty ? (
               <EmptyState onScan={() => go("scan")} />
@@ -193,7 +197,8 @@ export default function App({ user, onSignOut }: AppProps) {
               </>
             )}
           </section>
-        ) : sel.v === "scan" ? (
+        )}
+        {sel.v === "scan" && (
           <section className="view" aria-label="Scan" key="scan">
             <ScanCard
               meta={meta}
@@ -207,7 +212,18 @@ export default function App({ user, onSignOut }: AppProps) {
               onListen={() => go("listen")}
             />
           </section>
-        ) : (
+        )}
+        {sel.v === "drafts" && (
+          <section className="view" aria-label="Drafts" key="drafts">
+            <DraftsView rev={rev} onChanged={refresh} />
+          </section>
+        )}
+        {sel.v === "accounts" && (
+          <section className="view" aria-label="Accounts" key="accounts">
+            <AccountsView rev={rev} onChanged={refresh} onSetup={() => go("setup")} />
+          </section>
+        )}
+        {sel.v === "setup" && (
           <section className="view" aria-label="Setup" key="setup">
             <header className="view-head">
               <p className="eyebrow">
@@ -240,6 +256,7 @@ export default function App({ user, onSignOut }: AppProps) {
                 onChanged={refresh}
               />
             </div>
+            {user.is_admin && <ProxySettingsForm onChanged={refresh} />}
           </section>
         )}
       </main>

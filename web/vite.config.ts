@@ -1,4 +1,5 @@
-import { defineConfig, type ProxyOptions } from "vite";
+import type { ProxyOptions } from "vite";
+import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
 const API = "http://127.0.0.1:8042";
@@ -22,6 +23,19 @@ export default defineConfig({
     proxy: {
       "/api": proxy,
       "/health": proxy,
+    },
+  },
+  test: {
+    environment: "jsdom",
+    include: ["src/test/**/*.test.{ts,tsx}"],
+    setupFiles: ["src/test/setup.ts"],
+    coverage: {
+      provider: "v8",
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: ["src/test/**", "src/main.tsx"],
+      reportsDirectory: "coverage",
+      // SonarQube resolves report paths from the repository root, so they start with web/.
+      reporter: ["text", ["lcov", { projectRoot: ".." }]],
     },
   },
 });

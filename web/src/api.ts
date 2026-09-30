@@ -1,13 +1,25 @@
 import type {
   Account,
+  AccountImportResult,
   AccountsResponse,
+  AccountStats,
+  AccountUpdate,
+  AccountView,
   AuthConfig,
   ConnectRequest,
+  Draft,
+  DraftCounts,
+  DraftDetail,
+  DraftEdit,
+  DraftStatus,
+  DraftWarning,
   Keyword,
   Meta,
   Mention,
   Project,
-  ProjectAccount,
+  ProjectPool,
+  ProxySettings,
+  PublishResult,
   Scope,
   Sentiment,
   SourceSettings,
@@ -20,10 +32,13 @@ import type {
 
 export class ApiError extends Error {
   readonly status: number;
-  constructor(status: number, message: string) {
+  /** The parsed error body, e.g. a refused publish's {error, next_at}. */
+  readonly data: unknown;
+  constructor(status: number, message: string, data: unknown = null) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.data = data;
   }
 }
 
@@ -101,7 +116,7 @@ async function send<T>(method: Method, path: string, opts: Opts): Promise<T> {
       data && typeof data === "object" && "error" in data && typeof (data as { error: unknown }).error === "string"
         ? (data as { error: string }).error
         : `${res.status} ${res.statusText || "request failed"}`;
-    throw new ApiError(res.status, msg);
+    throw new ApiError(res.status, msg, data);
   }
   return data as T;
 }
@@ -156,16 +171,23 @@ export const api = {
   removeKeyword: (id: number, keywordId: number) =>
     request<{ deleted: boolean }>("DELETE", `/api/projects/${id}/keywords/${keywordId}`),
 
+  /** The project's account pool, one entry per publishing platform. */
   projectAccounts: (id: number, signal?: AbortSignal) =>
-    request<ProjectAccount[]>("GET", `/api/projects/${id}/accounts`, { signal }),
+    request<ProjectPool[]>("GET", `/api/projects/${id}/accounts`, { signal }),
 
+  /** Adds an account to the project's pool for its platform (idempotent). */
   bindAccount: (id: number, platform: string, accountId: number) =>
-    request<ProjectAccount[]>("PUT", `/api/projects/${id}/accounts/${encodeURIComponent(platform)}`, {
+    request<ProjectPool[]>("PUT", `/api/projects/${id}/accounts/${encodeURIComponent(platform)}`, {
       body: { account_id: accountId },
     }),
 
+  /** Empties the project's pool for one platform. */
   unbindAccount: (id: number, platform: string) =>
-    request<ProjectAccount[]>("DELETE", `/api/projects/${id}/accounts/${encodeURIComponent(platform)}`),
+    request<ProjectPool[]>("DELETE", `/api/projects/${id}/accounts/${encodeURIComponent(platform)}`),
+
+  /** Removes one account from the project's pool. */
+  unbindProjectAccount: (id: number, platform: string, accountId: number) =>
+    request<ProjectPool[]>("DELETE", `/api/projects/${id}/accounts/${encodeURIComponent(platform)}/${accountId}`),
 
   summary: (scope: Scope, signal?: AbortSignal) =>
     request<SummaryResponse>("GET", "/api/summary", { params: scopeParams(scope), signal }),
@@ -196,12 +218,22 @@ export const api = {
 
   connectAccount: (body: ConnectRequest) => request<Account>("POST", "/api/accounts", { body }),
 
+  importAccounts: (text: string) => request<AccountImportResult>("POST", "/api/accounts/import", { body: { text } }),
+
   deleteAccount: (id: number) => request<{ deleted: boolean }>("DELETE", `/api/accounts/${id}`),
 
   redditAuthorize: (clientId: string, clientSecret: string, projectId?: number) =>
     request<{ authorize_url: string; redirect_uri: string }>("POST", "/api/accounts/reddit/authorize", {
       body: { client_id: clientId, client_secret: clientSecret, project_id: projectId },
     }),
+
+  redditApp: (signal?: AbortSignal) => request<{ configured: boolean }>("GET", "/api/accounts/reddit/app", { signal }),
+
+  proxySettings: (signal?: AbortSignal) => request<ProxySettings>("GET", "/api/settings/proxy", { signal }),
+
+  saveProxy: (url: string) => request<ProxySettings>("PUT", "/api/settings/proxy", { body: { url } }),
+
+  resetProxy: () => request<ProxySettings>("DELETE", "/api/settings/proxy"),
 };
 
 export function errorMessage(e: unknown): string {
@@ -211,4 +243,51 @@ export function errorMessage(e: unknown): string {
 
 export function isAbort(e: unknown): boolean {
   return e instanceof DOMException && e.name === "AbortError";
+}
+
+// ---------- Accounts: health, limits and ban rate ----------
+
+export const accountsApi = {
+  /** A limit of 0 returns it to the platform default. */
+  update: (id: number, body: AccountUpdate) => request<AccountView>("PATCH", `/api/accounts/${id}`, { body }),
+
+  check: (id: number) => request<AccountView>("POST", `/api/accounts/${id}/check`),
+
+  checkAll: () => request<AccountsResponse>("POST", "/api/accounts/check"),
+
+  stats: (days = 30, signal?: AbortSignal) =>
+    request<AccountStats>("GET", "/api/accounts/stats", { params: { days }, signal }),
+};
+
+// ---------- Drafts: the publishing queue ----------
+
+export const draftsApi = {
+  list: (status: DraftStatus | undefined, signal?: AbortSignal) =>
+    request<Draft[]>("GET", "/api/drafts", { params: { status, limit: 500 }, signal }),
+
+  /** Drafts per status, whatever the filter. */
+  counts: (signal?: AbortSignal) => request<DraftCounts>("GET", "/api/drafts/counts", { signal }),
+
+  get: (id: number, signal?: AbortSignal) => request<DraftDetail>("GET", `/api/drafts/${id}`, { signal }),
+
+  /** Any change sends the draft back to review. */
+  edit: (id: number, body: DraftEdit) => request<DraftDetail>("PATCH", `/api/drafts/${id}`, { body }),
+
+  approve: (id: number) => request<Draft>("POST", `/api/drafts/${id}/approve`),
+
+  skip: (id: number) => request<Draft>("POST", `/api/drafts/${id}/skip`),
+
+  /** Only approved drafts; a limit answers 409 {error, next_at}. */
+  publish: (id: number) => request<PublishResult>("POST", `/api/drafts/${id}/publish`),
+
+  warnings: (id: number, signal?: AbortSignal) =>
+    request<DraftWarning[]>("GET", `/api/drafts/${id}/warnings`, { signal }),
+};
+
+/** When a refused publish may be retried: the next_at of its 409 body, if any. */
+export function retryAt(e: unknown): string | null {
+  if (!(e instanceof ApiError) || e.status !== 409) return null;
+  const d = e.data;
+  if (d && typeof d === "object" && "next_at" in d && typeof d.next_at === "string") return d.next_at;
+  return null;
 }

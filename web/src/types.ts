@@ -180,17 +180,107 @@ export interface Platform {
   max_chars: number;
 }
 
+export type AccountStatus = "unknown" | "live" | "invalid" | "suspended" | "limited";
+
 export interface Account {
   id: number;
   platform: string;
   handle: string;
+  status: AccountStatus;
+  status_detail: string | null;
+  checked_at: string | null;
+  limited_until: string | null;
+  paused: boolean;
+  /** Per-account limits; null means the platform default. */
+  daily_limit: number | null;
+  min_interval_sec: number | null;
+  community_cooldown_h: number | null;
   created_at: string;
   updated_at: string;
 }
 
+/** Where an account stands against its publishing limits. */
+export interface AccountQuota {
+  daily: number;
+  used_24h: number;
+  remaining: number;
+  /** When it may publish next; null = now, or never without a person (see ready). */
+  next_at: string | null;
+  reason?: string;
+  ready: boolean;
+}
+
+export interface AccountActivity {
+  published_24h: number;
+  published_7d: number;
+  published_30d: number;
+  failed_30d: number;
+  /** Of the ones published in the last 30 days. */
+  removed_30d: number;
+  last_published_at: string | null;
+  last_error: string | null;
+}
+
+/** An account's effective limits: its own overrides, else the platform defaults. */
+export interface AccountLimits {
+  daily: number;
+  min_interval_sec: number;
+  community_cooldown_h: number;
+  /** At least one limit overrides the platform default. */
+  custom: boolean;
+}
+
+/** An account as GET /api/accounts returns it. */
+export interface AccountView extends Account {
+  limits: AccountLimits;
+  /** Platform defaults, independent of this account's overrides. */
+  default_limits?: Omit<AccountLimits, "custom">;
+  /** Missing when it could not be computed. */
+  quota?: AccountQuota;
+  activity: AccountActivity;
+}
+
 export interface AccountsResponse {
   platforms: Platform[];
-  accounts: Account[];
+  accounts: AccountView[];
+  /** POST /api/accounts/check only: why some checks could not run. */
+  error?: string;
+  errors?: string[];
+}
+
+/** PATCH /api/accounts/{id}; a limit of 0 returns it to the platform default. */
+export interface AccountUpdate {
+  paused?: boolean;
+  daily_limit?: number;
+  min_interval_sec?: number;
+  community_cooldown_h?: number;
+}
+
+export interface BanRatePoint {
+  day: string;
+  platform: string;
+  total: number;
+  dead: number;
+}
+
+export interface AccountTally {
+  /** Absent on the total. */
+  platform?: string;
+  total: number;
+  live: number;
+  dead: number;
+  limited: number;
+  paused: number;
+  unknown: number;
+  /** dead / total, 0–1. */
+  ban_rate: number;
+}
+
+export interface AccountStats {
+  days: number;
+  series: BanRatePoint[];
+  platforms: AccountTally[];
+  total: AccountTally;
 }
 
 export interface ConnectRequest {
@@ -202,8 +292,95 @@ export interface ConnectRequest {
   project_id?: number;
 }
 
-/** The account a project publishes and scans with on one platform. */
-export interface ProjectAccount {
+export interface AccountImportRow {
+  row: number;
+  platform: string;
+  handle: string;
+  status: string;
+  error?: string;
+}
+
+export interface AccountImportResult {
+  results: AccountImportRow[];
+  added: number;
+  updated: number;
+  errors: number;
+}
+
+export interface ProxySettings {
+  configured: boolean;
+  origin: "ui" | "env" | "";
+}
+
+/** A project's pool of accounts on one platform: publishing picks among them. */
+export interface ProjectPool {
   platform: Platform;
-  account: Account | null;
+  accounts: AccountView[];
+}
+
+// ---------- Drafts: the publishing queue ----------
+
+export type DraftStatus = "draft" | "approved" | "publishing" | "published" | "failed" | "skipped";
+
+export interface Draft {
+  id: number;
+  project_id: number | null;
+  platform: string;
+  /** null = the outbox picks an account at publish time. */
+  account_id: number | null;
+  kind: "post" | "reply";
+  community: string | null;
+  title: string | null;
+  body: string;
+  reply_to: string | null;
+  query: string | null;
+  mention_id: string | null;
+  status: DraftStatus;
+  remote_id: string | null;
+  remote_url: string | null;
+  error: string | null;
+  metrics: Record<string, unknown> | null;
+  metrics_at: string | null;
+  /** Published, then found removed by the platform or moderators. */
+  removed_at: string | null;
+  created_at: string;
+  updated_at: string;
+  approved_at: string | null;
+  published_at: string | null;
+}
+
+/** Drafts per status (GET /api/drafts/counts). */
+export type DraftCounts = Partial<Record<DraftStatus, number>>;
+
+/** Who would publish a draft now, and when it may go out. */
+export interface PublishPlan {
+  account: AccountView | null;
+  quota: AccountQuota | null;
+  /** null = now. */
+  next_at: string | null;
+  reason?: string;
+}
+
+export interface DraftDetail extends Draft {
+  /** null once the draft is published, publishing or skipped. */
+  plan: PublishPlan | null;
+}
+
+export interface DraftEdit {
+  title?: string;
+  body?: string;
+  community?: string;
+  /** null = pick automatically. */
+  account_id?: number | null;
+}
+
+export interface DraftWarning {
+  /** self_promo | duplicate | subreddit_rules | community_bans_promo | subreddit_rules_unavailable */
+  code: string;
+  text: string;
+}
+
+export interface PublishResult {
+  draft: Draft;
+  account: Account;
 }

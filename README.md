@@ -88,6 +88,7 @@ Then ask your agent something like *"promote my project https://github.com/me/th
 | `radaro sources` | Available sources and whether they are configured |
 | `radaro test-alert` | Send a synthetic alert (`--transport webhook\|email`, `--kind negative\|volume\|sentiment`) |
 | `radaro connect bluesky\|mastodon\|devto\|reddit` | Connect a publishing account (`--project` adds it to a project's pool) |
+| `radaro connect import <file\|->` | Import up to 500 accounts from CSV or JSON; `-` reads stdin, `--json` reports each row |
 | `radaro accounts` | Connected accounts with health, limits and quota (`--json` includes `quota.next_at`) |
 | `radaro accounts check [id]` | Check that accounts still work (credentials, suspension, rate limits) |
 | `radaro accounts pause\|resume <id>` | Stop or allow publishing from an account |
@@ -137,7 +138,7 @@ Delivery state lives in SQLite, so nothing is sent twice and failures are retrie
 
 Radaro talks to each platform's API directly. You connect your own accounts; credentials stay in the server's database (readable only by the server's user) and are never sent back to the browser or the CLI.
 
-The easiest way is the dashboard: **Setup** → **Connect account** next to the platform, or **Connect new** in a project's Accounts block to bind it to that project at once. Each project publishes with its own pool of accounts per platform, and a project's Reddit or Mastodon account is also used to scan that platform. Keys are checked with the platform before they are saved. For Reddit, create a "web app" at [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps) with the redirect URI the form shows (`<your server>/oauth/reddit/callback`, e.g. `http://127.0.0.1:8042/oauth/reddit/callback`), then approve access on Reddit. The CLI commands below do the same from a terminal.
+The easiest way is the dashboard: **Setup** → **Connect account** next to the platform, or **Connect new** in a project's Accounts block to bind it to that project at once. Each project publishes with its own pool of accounts per platform, and a project's Reddit or Mastodon account is also used to scan that platform. Keys are checked with the platform before they are saved. For Reddit, create a "web app" at [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps) with the redirect URI the form shows (`<your server>/oauth/reddit/callback`, e.g. `http://127.0.0.1:8042/oauth/reddit/callback`), then approve access on Reddit. Once one Reddit account is connected, **Add another Reddit account** reuses its app credentials; sign in to the other Reddit account in a private browser window first. The CLI commands below do the same from a terminal.
 
 | Platform | Connect | Posts | Replies | Metrics |
 |---|---|---|---|---|
@@ -147,6 +148,8 @@ The easiest way is the dashboard: **Setup** → **Connect account** next to the 
 | Dev.to | `radaro connect devto` + an API key (Settings → Extensions) | ✓ articles (`--community` = tags) | — | views, reactions, comments |
 
 Secrets are read from a hidden prompt, or from stdin when piped (`echo "$TOKEN" | radaro connect devto`).
+
+For several Bluesky, Mastodon or Dev.to accounts, use **Import** in Setup or `radaro connect import accounts.csv`. CSV accepts an optional `platform,handle,secret,instance` header; JSON accepts an array of objects with those fields. At most 500 rows are accepted, with each credential checked before it is saved. The result says which rows were added, updated or rejected without returning their secrets. Reddit uses browser approval, so it is added separately. An admin may set one outbound HTTP, HTTPS or SOCKS5 proxy in Setup when the server needs it to reach platforms; it applies to scans and publishing without a restart. Without a saved proxy, Go uses `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` from the server environment.
 
 ```bash
 radaro project create "Launch"                 # → id 2

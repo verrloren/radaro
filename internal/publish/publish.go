@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/verrloren/radaro/internal/netproxy"
 )
 
 // Post is what a draft asks a connector to publish.
@@ -138,7 +140,7 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("HTTP %d: %s", e.Status, e.Body)
 }
 
-var httpClient = &http.Client{Timeout: 30 * time.Second}
+var httpClient = &http.Client{Timeout: 30 * time.Second, Transport: netproxy.Transport()}
 
 type request struct {
 	method      string

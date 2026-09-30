@@ -13,7 +13,7 @@ Radaro is a single Go binary for self-hosted social listening and human-approved
 3. **Alert.** Webhook / Slack / SMTP alerts for negative mentions, volume spikes and sentiment drops.
 4. **Publish.** `opportunities` → `draft` → `approve` → `publish` to Reddit, Bluesky, Mastodon and Dev.to via their public APIs → `stats`.
 5. **Dashboard.** `serve` runs the React dashboard, embedded in the binary, plus the JSON API.
-6. **Users.** Email + password accounts with JWT sessions. Each user has projects; a project has keywords and one account per platform.
+6. **Users.** Email + password accounts with JWT sessions. Each user has projects; a project has keywords and may pool several accounts per platform.
 
 Design constraints, don't break them:
 
