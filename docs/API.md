@@ -1,11 +1,62 @@
-# Radaro local HTTP API
+# Radaro HTTP API
 
 `radaro serve` exposes a JSON API on the same origin as the dashboard
 (default `http://127.0.0.1:8042`). Every response is JSON. Errors use
 `{"error": "message"}` with a 4xx/5xx status.
 
-Mutating requests (`POST`, `DELETE`) are rejected with `403` when the browser
-sends an `Origin` header that does not match the server host.
+Mutating requests (`POST`, `PUT`, `DELETE`) are rejected with `403` when the
+browser sends an `Origin` header that does not match the server host.
+
+## Authentication
+
+Everything under `/api/` except `/api/auth/{config,register,login,refresh,logout}`
+needs a signed-in user; without one the answer is `401`. `/health` and the
+Reddit OAuth callback are public.
+
+- **Dashboard (browser):** sign-in sets two httpOnly, `SameSite=Lax` cookies:
+  `radaro_access` (a JWT, 15 minutes) and `radaro_refresh` (30 days, sent only
+  to `/api/auth`). Scripts never see a token. On `401`, call
+  `POST /api/auth/refresh` once and retry.
+- **CLI and agents:** send `X-Radaro-Client: cli`. Sign-in then returns the
+  tokens in the body and sets no cookies; send `Authorization: Bearer <access_token>`
+  and refresh with `{"refresh_token": ...}` in the body.
+
+Refresh tokens rotate on every use. Presenting an already rotated token again
+(after a 30-second grace for parallel tabs) signs out every session of that
+user. Register, login and refresh allow 10 attempts per minute per client
+(`429` beyond). Behind a reverse proxy on the same machine, the client is the
+last `X-Forwarded-For` entry, and `X-Forwarded-Proto: https` makes the cookies
+`Secure`.
+
+The first user to register becomes the admin and is the only one who may
+change instance-wide source keys. After that, registration is open only with
+`RADARO_REGISTRATION=open`.
+
+```ts
+interface User {
+  id: number;
+  email: string;
+  is_admin: boolean;
+  created_at: string;
+}
+
+interface Session {               // CLI only (X-Radaro-Client: cli)
+  user: User;
+  access_token: string;
+  access_expires_at: string;      // RFC 3339
+  refresh_token: string;
+  refresh_expires_at: string;
+}
+```
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/api/auth/config` | — | `{"registration_open": boolean}` |
+| POST | `/api/auth/register` | `{"email": string, "password": string}` | `201`: browser `{"user": User, "access_expires_at": string}` + cookies, CLI `Session`; `403` registration closed; `409` email taken; `422` invalid email or password (8 characters to 72 bytes) |
+| POST | `/api/auth/login` | `{"email": string, "password": string}` | as register, `200`; `401` `invalid email or password` |
+| POST | `/api/auth/refresh` | CLI: `{"refresh_token": string}`; browser: the cookie | as login; `401` when the token is unknown, expired, signed out or reused |
+| POST | `/api/auth/logout` | as refresh | `{"signed_out": true}`; clears the cookies |
+| GET | `/api/auth/me` | — | `User` |
 
 ## Types
 
@@ -147,8 +198,8 @@ interface Account { id: number; platform: string; handle: string; created_at: st
 | GET | `/api/mentions` | `?q=` or `?p=`, `&source=`, `&sentiment=`, `&limit=` (1–1000, default 200) | `Mention[]`, newest first |
 | POST | `/api/track` | `{"query": string, "sources": string[], "mode": "incremental" \| "backfill", "pages": number, "project_id"?: number}` | `TrackResult` (may take several seconds) |
 | GET | `/api/settings/sources` | — | `SourceSettings[]` for the sources that take keys (RSS, X, YouTube); Reddit and Mastodon scan with a connected account instead |
-| PUT | `/api/settings/sources/{name}` | `{"values": Record<string, string>}` | `SourceSettings`; a blank secret keeps the saved one, all blank removes the saved settings; `422` unknown field; `404` source without settings |
-| DELETE | `/api/settings/sources/{name}` | — | `SourceSettings` after falling back to the environment |
+| PUT | `/api/settings/sources/{name}` | `{"values": Record<string, string>}` | admin only (`403` otherwise). `SourceSettings`; a blank secret keeps the saved one, all blank removes the saved settings; `422` unknown field; `404` source without settings |
+| DELETE | `/api/settings/sources/{name}` | — | admin only. `SourceSettings` after falling back to the environment |
 | GET | `/api/accounts` | — | `{"platforms": Platform[], "accounts": Account[]}` |
 | POST | `/api/accounts` | `{"platform": "bluesky" \| "mastodon" \| "devto", "handle"?: string, "instance"?: string, "secret": string}` | `201 Account` once the platform accepts the key; `422` with the platform's refusal |
 | DELETE | `/api/accounts/{id}` | — | `{"deleted": true}`; drafts keep their text |

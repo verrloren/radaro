@@ -28,6 +28,9 @@ const refreshGrace = 30 * time.Second
 // bcryptCost is a variable so tests can hash quickly.
 var bcryptCost = 12
 
+// FastHashingForTests lowers the bcrypt cost; tests of other packages call it.
+func FastHashingForTests() { bcryptCost = bcrypt.MinCost }
+
 var (
 	// ErrInvalidCredentials is the one answer to a bad email or password, so
 	// sign-in does not reveal which addresses exist.

@@ -16,6 +16,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/verrloren/radaro/internal/auth"
 	"github.com/verrloren/radaro/internal/config"
 	"github.com/verrloren/radaro/internal/model"
 	"github.com/verrloren/radaro/internal/pipeline"
@@ -31,6 +32,8 @@ type Server struct {
 	version string
 	assets  fs.FS // built dashboard (web/dist)
 	oauth   oauthStates
+	auth    *auth.Service
+	limiter *limiter
 
 	// connect and redditExchange reach the platforms; tests replace them.
 	connect        func(ctx context.Context, platform string, in publish.ConnectInput) (string, any, error)
@@ -38,12 +41,16 @@ type Server struct {
 }
 
 // New returns a server over an open store. assets may be nil (API only).
-func New(cfg *config.Config, st *store.Store, version string, assets fs.FS) *Server {
+func New(cfg *config.Config, st *store.Store, version string, assets fs.FS) (*Server, error) {
+	a, err := auth.New(st, cfg)
+	if err != nil {
+		return nil, err
+	}
 	return &Server{
-		cfg: cfg, store: st, version: version, assets: assets,
+		cfg: cfg, store: st, version: version, assets: assets, auth: a, limiter: newLimiter(10, 10),
 		connect:        publish.Connect,
 		redditExchange: func(ctx context.Context, r *publish.Reddit, code string) error { return r.ExchangeCode(ctx, code) },
-	}
+	}, nil
 }
 
 // Handler builds the HTTP routes.
@@ -53,25 +60,36 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/health", s.health)
 	r.Get(redditCallbackPath, s.redditCallback)
 	r.Route("/api", func(r chi.Router) {
-		r.Get("/meta", s.meta)
-		r.Get("/queries", s.queries)
-		r.Get("/tracking", s.tracking)
-		r.Get("/projects", s.projects)
-		r.Post("/projects", s.createProject)
-		r.Get("/projects/{id}", s.project)
-		r.Delete("/projects/{id}", s.deleteProject)
-		r.Post("/projects/{id}/queries", s.addProjectQuery)
-		r.Delete("/projects/{id}/queries", s.removeProjectQuery)
-		r.Get("/summary", s.summary)
-		r.Get("/mentions", s.mentions)
-		r.Post("/track", s.track)
-		r.Get("/settings/sources", s.listSourceSettings)
-		r.Put("/settings/sources/{name}", s.saveSourceSettings)
-		r.Delete("/settings/sources/{name}", s.deleteSourceSettings)
-		r.Get("/accounts", s.accounts)
-		r.Post("/accounts", s.connectAccount)
-		r.Delete("/accounts/{id}", s.deleteAccount)
-		r.Post("/accounts/reddit/authorize", s.redditAuthorize)
+		r.Route("/auth", func(r chi.Router) {
+			r.Get("/config", s.authConfig)
+			r.With(s.rateLimit).Post("/register", s.register)
+			r.With(s.rateLimit).Post("/login", s.login)
+			r.With(s.rateLimit).Post("/refresh", s.refresh)
+			r.Post("/logout", s.logout)
+			r.With(s.requireAuth).Get("/me", s.me)
+		})
+		r.Group(func(r chi.Router) {
+			r.Use(s.requireAuth)
+			r.Get("/meta", s.meta)
+			r.Get("/queries", s.queries)
+			r.Get("/tracking", s.tracking)
+			r.Get("/projects", s.projects)
+			r.Post("/projects", s.createProject)
+			r.Get("/projects/{id}", s.project)
+			r.Delete("/projects/{id}", s.deleteProject)
+			r.Post("/projects/{id}/queries", s.addProjectQuery)
+			r.Delete("/projects/{id}/queries", s.removeProjectQuery)
+			r.Get("/summary", s.summary)
+			r.Get("/mentions", s.mentions)
+			r.Post("/track", s.track)
+			r.Get("/settings/sources", s.listSourceSettings)
+			r.With(s.requireAdmin).Put("/settings/sources/{name}", s.saveSourceSettings)
+			r.With(s.requireAdmin).Delete("/settings/sources/{name}", s.deleteSourceSettings)
+			r.Get("/accounts", s.accounts)
+			r.Post("/accounts", s.connectAccount)
+			r.Delete("/accounts/{id}", s.deleteAccount)
+			r.Post("/accounts/reddit/authorize", s.redditAuthorize)
+		})
 		r.NotFound(func(w http.ResponseWriter, _ *http.Request) { writeError(w, http.StatusNotFound, "not found") })
 	})
 	r.NotFound(s.spa)

@@ -9,15 +9,37 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/verrloren/radaro/internal/auth"
 	"github.com/verrloren/radaro/internal/config"
 	"github.com/verrloren/radaro/internal/model"
 	"github.com/verrloren/radaro/internal/store"
 )
 
+func init() { auth.FastHashingForTests() }
+
+// newServer returns the API with every request signed in as the first user
+// (the admin), unless the request sets its own Authorization header.
 func newServer(t *testing.T) (http.Handler, *store.Store) {
 	t.Helper()
 	srv, st := newTestServer(t, &config.Config{Sources: []string{"hackernews"}})
-	return srv.Handler(), st
+	return signedIn(t, srv, "owner@example.com"), st
+}
+
+// signedIn registers email (open registration is not needed for the first
+// user) and wraps the handler so requests carry that user's token.
+func signedIn(t *testing.T, srv *Server, email string) http.Handler {
+	t.Helper()
+	sess, err := srv.auth.Register(email, "correct horse", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := srv.Handler()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") == "" {
+			r.Header.Set("Authorization", "Bearer "+sess.AccessToken)
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
 func newTestServer(t *testing.T, cfg *config.Config) (*Server, *store.Store) {
@@ -37,7 +59,14 @@ func newTestServer(t *testing.T, cfg *config.Config) (*Server, *store.Store) {
 		"index.html":    {Data: []byte("<html>app</html>")},
 		"assets/app.js": {Data: []byte("console.log(1)")},
 	}
-	return New(cfg, st, "test", assets), st
+	if cfg.AccessTTL == 0 {
+		cfg.AccessTTL, cfg.RefreshTTL = 15*time.Minute, time.Hour
+	}
+	srv, err := New(cfg, st, "test", assets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return srv, st
 }
 
 func do(h http.Handler, method, path, body string, headers ...string) *httptest.ResponseRecorder {

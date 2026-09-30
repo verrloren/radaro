@@ -47,11 +47,15 @@ func (a *app) runServer(ctx context.Context, st *store.Store, host string, port 
 		return errors.New("--port must be between 1 and 65535")
 	}
 	if host != "127.0.0.1" && host != "localhost" && host != "::1" {
-		stderr("! The dashboard has no authentication. Expose it only on a trusted network or behind an authenticated reverse proxy.\n")
+		stderr("! Serve over HTTPS (a reverse proxy such as Caddy) when this address is reachable from other machines: sign-in sends passwords.\n")
+	}
+	api, err := server.New(a.cfg, st, version, web.Dist())
+	if err != nil {
+		return err
 	}
 	srv := &http.Server{
 		Addr:              net.JoinHostPort(host, strconv.Itoa(port)),
-		Handler:           server.New(a.cfg, st, version, web.Dist()).Handler(),
+		Handler:           api.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	fmt.Printf("\nRadaro dashboard → http://%s\n", srv.Addr)

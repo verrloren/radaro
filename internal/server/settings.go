@@ -239,6 +239,7 @@ type oauthStates struct {
 }
 
 type pendingOAuth struct {
+	userID  int64 // the callback carries no session: the state says whose account it is
 	creds   publish.RedditCredentials
 	expires time.Time
 }
@@ -273,7 +274,7 @@ func (o *oauthStates) take(state string) (pendingOAuth, bool) {
 // at; it must match the redirect URI registered in the user's Reddit app.
 func redditRedirectURI(r *http.Request) string {
 	scheme := "http"
-	if r.TLS != nil {
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
 		scheme = "https"
 	}
 	return scheme + "://" + r.Host + redditCallbackPath
@@ -300,6 +301,7 @@ func (s *Server) redditAuthorize(w http.ResponseWriter, r *http.Request) {
 	state := hex.EncodeToString(buf)
 	redirect := redditRedirectURI(r)
 	s.oauth.put(state, pendingOAuth{
+		userID:  userID(r),
 		creds:   publish.RedditCredentials{ClientID: body.ClientID, ClientSecret: strings.TrimSpace(body.ClientSecret), RedirectURI: redirect},
 		expires: time.Now().Add(10 * time.Minute),
 	})
