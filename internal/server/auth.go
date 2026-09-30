@@ -33,11 +33,11 @@ func userID(r *http.Request) int64 {
 // requireAuth accepts a Bearer token (CLI) or the access cookie (dashboard).
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Any other Authorization scheme (a proxy's Basic auth) falls back to
+		// the cookie.
 		token := ""
-		if h := r.Header.Get("Authorization"); h != "" {
-			if t, ok := strings.CutPrefix(h, "Bearer "); ok {
-				token = strings.TrimSpace(t)
-			}
+		if t, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
+			token = strings.TrimSpace(t)
 		} else if c, err := r.Cookie(accessCookie); err == nil {
 			token = c.Value
 		}
