@@ -27,6 +27,9 @@ type Account struct {
 	CommunityCooldownH *int   `json:"community_cooldown_h"`
 	CreatedAt          string `json:"created_at"`
 	UpdatedAt          string `json:"updated_at"`
+	// UserID is the owner, 0 when unowned. Background jobs that run as the
+	// server (user 0) need it to act for the owner; it is never sent to clients.
+	UserID int64 `json:"-"`
 }
 
 // Account statuses. Dead accounts (invalid, suspended) are never picked to publish.
@@ -87,11 +90,11 @@ func (s *Store) UpdateAccountCredentials(id int64, credentials any) error {
 }
 
 const accountColumns = `id, platform, handle, credentials, status, status_detail, checked_at, limited_until, paused,
-	daily_limit, min_interval_sec, community_cooldown_h, created_at, updated_at`
+	daily_limit, min_interval_sec, community_cooldown_h, created_at, updated_at, user_id`
 
 // accountColumnsAs is accountColumns for a query that names accounts "a".
 const accountColumnsAs = `a.id, a.platform, a.handle, a.credentials, a.status, a.status_detail, a.checked_at, a.limited_until, a.paused,
-	a.daily_limit, a.min_interval_sec, a.community_cooldown_h, a.created_at, a.updated_at`
+	a.daily_limit, a.min_interval_sec, a.community_cooldown_h, a.created_at, a.updated_at, a.user_id`
 
 func scanAccount(row interface{ Scan(...any) error }, extra ...any) (*Account, error) {
 	var (
@@ -99,15 +102,17 @@ func scanAccount(row interface{ Scan(...any) error }, extra ...any) (*Account, e
 		creds                     string
 		detail, checked, limited  sql.NullString
 		daily, interval, cooldown sql.NullInt64
+		ownerID                   sql.NullInt64
 	)
 	dest := append([]any{&a.ID, &a.Platform, &a.Handle, &creds, &a.Status, &detail, &checked, &limited, &a.Paused,
-		&daily, &interval, &cooldown, &a.CreatedAt, &a.UpdatedAt}, extra...)
+		&daily, &interval, &cooldown, &a.CreatedAt, &a.UpdatedAt, &ownerID}, extra...)
 	if err := row.Scan(dest...); err != nil {
 		return nil, err
 	}
 	a.Credentials = json.RawMessage(creds)
 	a.StatusDetail, a.CheckedAt, a.LimitedUntil = nullStr(detail), nullStr(checked), nullStr(limited)
 	a.DailyLimit, a.MinIntervalSec, a.CommunityCooldownH = nullInt(daily), nullInt(interval), nullInt(cooldown)
+	a.UserID = ownerID.Int64
 	return &a, nil
 }
 
@@ -198,10 +203,12 @@ type Draft struct {
 	UpdatedAt   string         `json:"updated_at"`
 	ApprovedAt  *string        `json:"approved_at"`
 	PublishedAt *string        `json:"published_at"`
+	// UserID is the owner, 0 when unowned; never sent to clients.
+	UserID int64 `json:"-"`
 }
 
 const draftColumns = `id, project_id, platform, account_id, kind, community, title, body, reply_to, query, mention_id, status,
-	remote_id, remote_url, error, metrics, metrics_at, removed_at, created_at, updated_at, approved_at, published_at`
+	remote_id, remote_url, error, metrics, metrics_at, removed_at, created_at, updated_at, approved_at, published_at, user_id`
 
 func scanDraft(row interface{ Scan(...any) error }) (*Draft, error) {
 	var (
@@ -211,11 +218,13 @@ func scanDraft(row interface{ Scan(...any) error }) (*Draft, error) {
 		mention, remoteID, remoteURL, errMsg sql.NullString
 		metrics, metricsAt, approved, pub    sql.NullString
 		removed                              sql.NullString
+		ownerID                              sql.NullInt64
 	)
 	if err := row.Scan(&d.ID, &project, &d.Platform, &account, &d.Kind, &community, &title, &d.Body, &replyTo, &query, &mention,
-		&d.Status, &remoteID, &remoteURL, &errMsg, &metrics, &metricsAt, &removed, &d.CreatedAt, &d.UpdatedAt, &approved, &pub); err != nil {
+		&d.Status, &remoteID, &remoteURL, &errMsg, &metrics, &metricsAt, &removed, &d.CreatedAt, &d.UpdatedAt, &approved, &pub, &ownerID); err != nil {
 		return nil, err
 	}
+	d.UserID = ownerID.Int64
 	if project.Valid {
 		d.ProjectID = &project.Int64
 	}
