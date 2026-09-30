@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -65,6 +66,18 @@ func TestMigrationStepsRunOnceAndKeepData(t *testing.T) {
 	}
 	if runs != 1 {
 		t.Fatalf("step ran %d times, want 1", runs)
+	}
+	// The database as it was before the upgrade is kept next to it.
+	snapshot := fmt.Sprintf("%s.v%d.bak", path, latest)
+	info, err := os.Stat(snapshot)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("pre-upgrade snapshot: %v, %v", info, err)
+	}
+	db, _ := sql.Open("sqlite", "file:"+snapshot)
+	defer db.Close()
+	var v int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != latest {
+		t.Fatalf("snapshot version = %d, %v; want %d", v, err, latest)
 	}
 }
 

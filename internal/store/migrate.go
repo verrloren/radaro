@@ -162,6 +162,22 @@ func (s *Store) migrate() (err error) {
 	if len(pending) == 0 {
 		return nil
 	}
+	if version > 0 && s.path != ":memory:" {
+		// A schema upgrade cannot be undone by an older binary; keep the
+		// database as it was, next to it.
+		snapshot := fmt.Sprintf("%s.v%d.bak", s.path, version)
+		if _, err := os.Stat(snapshot); errors.Is(err, os.ErrNotExist) {
+			f, err := os.OpenFile(snapshot, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+			if err != nil {
+				return fmt.Errorf("back up before upgrading the schema: %w", err)
+			}
+			f.Close()
+			if _, err := conn.ExecContext(ctx, `VACUUM INTO ?`, snapshot); err != nil {
+				os.Remove(snapshot)
+				return fmt.Errorf("back up before upgrading the schema: %w", err)
+			}
+		}
+	}
 	// SQLite ignores foreign_keys inside a transaction, and rebuilding a table
 	// needs them off; each step checks them itself before committing.
 	if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
