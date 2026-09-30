@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -222,7 +221,7 @@ func readSecret(prompt string) (string, error) {
 		}
 		value = string(b)
 	} else {
-		line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+		line, err := stdin.ReadString('\n')
 		if err != nil && line == "" {
 			return "", errEmptySecret
 		}

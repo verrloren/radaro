@@ -85,6 +85,7 @@ func newRoot() *cobra.Command {
 		a.sourcesCmd(), a.projectCmd(), a.exportCmd(), a.testAlertCmd(),
 		a.connectCmd(), a.accountsCmd(), a.opportunitiesCmd(), a.draftCmd(), a.publishCmd(),
 		a.statsCmd(), a.activityCmd(), a.statusCmd(), a.skillCmd(), a.adminCmd(),
+		a.registerCmd(), a.loginCmd(), a.logoutCmd(), a.whoamiCmd(),
 	)
 	return root
 }
