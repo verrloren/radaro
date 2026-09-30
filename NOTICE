@@ -37,3 +37,6 @@ Dashboard assets (web/src, embedded in the binary)
 - Source icons are built from Simple Icons (https://simpleicons.org) paths,
   released under CC0 1.0. The logos remain trademarks of their owners and are
   used only to identify each platform.
+- The sign-in artwork (web/src/assets/auth-art.jpg) is Paul Signac's
+  "Capo di Noli" (1898), in the public domain, from Wikimedia Commons,
+  recoloured for Radaro with a gradient map in the logo's colours.
