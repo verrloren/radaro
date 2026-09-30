@@ -3,6 +3,7 @@ package publish
 import (
 	"context"
 	"errors"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -21,6 +22,15 @@ type Devto struct {
 
 func (d *Devto) headers() map[string]string {
 	return map[string]string{"api-key": d.Creds.APIKey, "Accept": "application/vnd.forem.api-v1+json"}
+}
+
+// Check verifies the API key.
+func (d *Devto) Check(ctx context.Context) (Health, error) {
+	user, err := d.Me(ctx)
+	if err != nil {
+		return healthOf(err)
+	}
+	return Health{Status: HealthLive, Detail: user}, nil
 }
 
 // Me returns the account's username.
@@ -75,5 +85,18 @@ func (d *Devto) Metrics(ctx context.Context, remoteID string) (Metrics, error) {
 			return Metrics{"views": a.Views, "reactions": a.Reactions, "comments": a.Comments}, nil
 		}
 	}
-	return nil, errors.New("article not found among your published articles")
+	// Missing from the list means unpublished or deleted; the public article
+	// endpoint tells those apart from a list that was merely truncated.
+	var public struct {
+		Reactions int64 `json:"public_reactions_count"`
+		Comments  int64 `json:"comments_count"`
+	}
+	err := do(ctx, request{method: "GET", url: devtoAPI + "/articles/" + url.PathEscape(remoteID), headers: d.headers()}, &public)
+	if isNotFound(err) {
+		return Metrics{MetricRemoved: true}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return Metrics{"reactions": public.Reactions, "comments": public.Comments}, nil
 }

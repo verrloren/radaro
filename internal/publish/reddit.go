@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 )
 
 var (
@@ -72,12 +75,25 @@ func (r *Reddit) tokenRequest(ctx context.Context, form url.Values) (map[string]
 		return nil, err
 	}
 	defer resp.Body.Close()
-	var out map[string]any
-	if resp.StatusCode != http.StatusOK {
-		return nil, &APIError{Status: resp.StatusCode}
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
 		return nil, err
+	}
+	var out map[string]any
+	decodeErr := json.Unmarshal(raw, &out)
+	// A revoked or expired grant comes back as invalid_grant, with HTTP 400
+	// or 200 depending on the grant type.
+	if msg, _ := out["error"].(string); msg == "invalid_grant" {
+		return nil, &AccountError{Status: HealthInvalid, Detail: "reddit refused the grant (invalid_grant); reconnect the account"}
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, &AccountError{Status: HealthInvalid, Detail: "reddit rejected the app's client id or secret"}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, responseError(resp.StatusCode, resp.Header, raw)
+	}
+	if decodeErr != nil {
+		return nil, fmt.Errorf("unexpected response: %s", snippet(raw))
 	}
 	if msg, ok := out["error"].(string); ok {
 		return nil, fmt.Errorf("reddit OAuth error: %s", msg)
@@ -113,7 +129,7 @@ func (r *Reddit) accessToken(ctx context.Context) (string, error) {
 		return r.token, nil
 	}
 	if r.Creds.RefreshToken == "" {
-		return "", errors.New("reddit account is not connected; run radaro connect reddit")
+		return "", &AccountError{Status: HealthInvalid, Detail: "reddit account is not connected; run radaro connect reddit"}
 	}
 	out, err := r.tokenRequest(ctx, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {r.Creds.RefreshToken}})
 	if err != nil {
@@ -127,6 +143,20 @@ func (r *Reddit) accessToken(ctx context.Context) (string, error) {
 }
 
 func (r *Reddit) api(ctx context.Context, method, path string, form url.Values, out any) error {
+	cached := r.token != ""
+	err := r.call(ctx, method, path, form, out)
+	var ae *AccountError
+	if cached && errors.As(err, &ae) && ae.Status == HealthInvalid {
+		// Access tokens live an hour: a 401 on a cached one asks for a new
+		// token, it does not mean the account is dead. Nothing was done, so
+		// the retry cannot duplicate a post.
+		r.token = ""
+		err = r.call(ctx, method, path, form, out)
+	}
+	return err
+}
+
+func (r *Reddit) call(ctx context.Context, method, path string, form url.Values, out any) error {
 	token, err := r.accessToken(ctx)
 	if err != nil {
 		return err
@@ -143,8 +173,9 @@ func (r *Reddit) api(ctx context.Context, method, path string, form url.Values, 
 // limits, rule violations) as HTTP 200 with a non-empty errors array.
 type redditJSON struct {
 	JSON struct {
-		Errors [][]any `json:"errors"`
-		Data   struct {
+		Errors    [][]any `json:"errors"`
+		Ratelimit float64 `json:"ratelimit"` // seconds, sent with some RATELIMIT errors
+		Data      struct {
 			Name   string `json:"name"`
 			URL    string `json:"url"`
 			Things []struct {
@@ -162,6 +193,7 @@ func (e redditJSON) err() error {
 		return nil
 	}
 	var parts []string
+	limited := false
 	for _, item := range e.JSON.Errors {
 		var s []string
 		for _, v := range item {
@@ -169,9 +201,36 @@ func (e redditJSON) err() error {
 				s = append(s, str)
 			}
 		}
+		if len(s) > 0 && s[0] == "RATELIMIT" {
+			limited = true
+		}
 		parts = append(parts, strings.Join(s, ": "))
 	}
-	return errors.New("reddit rejected it: " + strings.Join(parts, "; "))
+	msg := strings.Join(parts, "; ")
+	if limited {
+		wait := seconds(e.JSON.Ratelimit)
+		if wait <= 0 {
+			wait = redditWait(msg)
+		}
+		return &RateLimitError{RetryAfter: wait, Detail: "reddit: " + msg}
+	}
+	return errors.New("reddit rejected it: " + msg)
+}
+
+var redditTryAgain = regexp.MustCompile(`(?i)try again in (\d+) (millisecond|second|minute|hour)s?`)
+
+// redditWait parses "you are doing that too much. try again in 9 minutes."
+func redditWait(msg string) time.Duration {
+	m := redditTryAgain.FindStringSubmatch(msg)
+	if m == nil {
+		return defaultRetryAfter
+	}
+	n, _ := strconv.Atoi(m[1])
+	unit := map[string]time.Duration{"millisecond": time.Millisecond, "second": time.Second, "minute": time.Minute, "hour": time.Hour}[strings.ToLower(m[2])]
+	if d := time.Duration(n) * unit; d > 0 {
+		return d
+	}
+	return defaultRetryAfter
 }
 
 func (r *Reddit) Publish(ctx context.Context, p Post) (Result, error) {
@@ -193,7 +252,7 @@ func (r *Reddit) Publish(ctx context.Context, p Post) (Result, error) {
 		c := out.JSON.Data.Things[0].Data
 		return Result{RemoteID: c.Name, URL: redditWWW + c.Permalink}, nil
 	}
-	sr := strings.Trim(strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(p.Community), "/"), "r/"), "/")
+	sr := subredditName(p.Community)
 	form := url.Values{"api_type": {"json"}, "kind": {"self"}, "sr": {sr}, "title": {p.Title}, "text": {p.Body}}
 	if err := r.api(ctx, "POST", "/api/submit", form, &out); err != nil {
 		return Result{}, err
@@ -222,14 +281,22 @@ func RedditThingID(target string) (string, error) {
 	return "t3_" + m[1], nil
 }
 
+// subredditName accepts "golang", "r/golang" or "/r/golang/".
+func subredditName(s string) string {
+	return strings.Trim(strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(s), "/"), "r/"), "/")
+}
+
 func (r *Reddit) Metrics(ctx context.Context, remoteID string) (Metrics, error) {
 	var out struct {
 		Data struct {
 			Children []struct {
 				Data struct {
-					Score       int64    `json:"score"`
-					NumComments *int64   `json:"num_comments"`
-					UpvoteRatio *float64 `json:"upvote_ratio"`
+					Score             int64    `json:"score"`
+					NumComments       *int64   `json:"num_comments"`
+					UpvoteRatio       *float64 `json:"upvote_ratio"`
+					Body              string   `json:"body"`     // comments
+					Selftext          string   `json:"selftext"` // posts
+					RemovedByCategory *string  `json:"removed_by_category"`
 				} `json:"data"`
 			} `json:"children"`
 		} `json:"data"`
@@ -238,7 +305,7 @@ func (r *Reddit) Metrics(ctx context.Context, remoteID string) (Metrics, error) 
 		return nil, err
 	}
 	if len(out.Data.Children) == 0 {
-		return nil, errors.New("not found (removed?)")
+		return Metrics{MetricRemoved: true}, nil
 	}
 	d := out.Data.Children[0].Data
 	m := Metrics{"score": d.Score}
@@ -248,5 +315,46 @@ func (r *Reddit) Metrics(ctx context.Context, remoteID string) (Metrics, error) 
 	if d.UpvoteRatio != nil {
 		m["upvote_ratio"] = *d.UpvoteRatio
 	}
+	gone := func(text string) bool { return text == "[removed]" || text == "[deleted]" }
+	if gone(d.Body) || gone(d.Selftext) || (d.RemovedByCategory != nil && *d.RemovedByCategory != "") {
+		m[MetricRemoved] = true
+	}
 	return m, nil
+}
+
+// Check verifies the refresh token and asks Reddit whether the account is suspended.
+func (r *Reddit) Check(ctx context.Context) (Health, error) {
+	var me struct {
+		Name        string `json:"name"`
+		IsSuspended bool   `json:"is_suspended"`
+	}
+	if err := r.api(ctx, "GET", "/api/v1/me", nil, &me); err != nil {
+		return healthOf(err)
+	}
+	if me.IsSuspended {
+		return Health{Status: HealthSuspended, Detail: "u/" + me.Name + " is suspended"}, nil
+	}
+	return Health{Status: HealthLive, Detail: "u/" + me.Name}, nil
+}
+
+// SubredditRules returns a subreddit's posted rules.
+func (r *Reddit) SubredditRules(ctx context.Context, subreddit string) ([]SubredditRule, error) {
+	sr := subredditName(subreddit)
+	if sr == "" {
+		return nil, errors.New("subreddit is required")
+	}
+	var out struct {
+		Rules []struct {
+			ShortName   string `json:"short_name"`
+			Description string `json:"description"`
+		} `json:"rules"`
+	}
+	if err := r.api(ctx, "GET", "/r/"+url.PathEscape(sr)+"/about/rules", nil, &out); err != nil {
+		return nil, err
+	}
+	rules := make([]SubredditRule, 0, len(out.Rules))
+	for _, rule := range out.Rules {
+		rules = append(rules, SubredditRule{Name: rule.ShortName, Description: rule.Description})
+	}
+	return rules, nil
 }

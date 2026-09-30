@@ -35,13 +35,34 @@ func (m *Mastodon) auth() map[string]string {
 	return map[string]string{"Authorization": "Bearer " + m.Creds.AccessToken}
 }
 
+type mastodonAccount struct {
+	Acct      string `json:"acct"`
+	Suspended bool   `json:"suspended"`
+}
+
+func (m *Mastodon) verify(ctx context.Context) (mastodonAccount, error) {
+	var out mastodonAccount
+	err := do(ctx, request{method: "GET", url: MastodonInstanceURL(m.Creds.Instance) + "/api/v1/accounts/verify_credentials", headers: m.auth()}, &out)
+	return out, err
+}
+
 // VerifyCredentials returns the account's handle (acct).
 func (m *Mastodon) VerifyCredentials(ctx context.Context) (string, error) {
-	var out struct {
-		Acct string `json:"acct"`
+	a, err := m.verify(ctx)
+	return a.Acct, err
+}
+
+// Check verifies the token. A suspended account is refused with 403, or, on
+// some instances, still answers with suspended=true.
+func (m *Mastodon) Check(ctx context.Context) (Health, error) {
+	a, err := m.verify(ctx)
+	if err != nil {
+		return healthOf(err)
 	}
-	err := do(ctx, request{method: "GET", url: MastodonInstanceURL(m.Creds.Instance) + "/api/v1/accounts/verify_credentials", headers: m.auth()}, &out)
-	return out.Acct, err
+	if a.Suspended {
+		return Health{Status: HealthSuspended, Detail: "@" + a.Acct + " is suspended"}, nil
+	}
+	return Health{Status: HealthLive, Detail: "@" + a.Acct}, nil
 }
 
 func (m *Mastodon) Publish(ctx context.Context, p Post) (Result, error) {
@@ -98,6 +119,9 @@ func (m *Mastodon) Metrics(ctx context.Context, remoteID string) (Metrics, error
 		Replies    int64 `json:"replies_count"`
 	}
 	err := do(ctx, request{method: "GET", url: MastodonInstanceURL(m.Creds.Instance) + "/api/v1/statuses/" + url.PathEscape(remoteID), headers: m.auth()}, &out)
+	if isNotFound(err) {
+		return Metrics{MetricRemoved: true}, nil
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -124,7 +124,8 @@ func New(platform string, credentials json.RawMessage, userAgentVersion string) 
 	return nil, fmt.Errorf("unknown platform %q", platform)
 }
 
-// APIError is a non-2xx platform response.
+// APIError is a non-2xx platform response that is neither a rate limit
+// (RateLimitError) nor a refusal of the account (AccountError).
 type APIError struct {
 	Status int
 	Body   string
@@ -173,7 +174,7 @@ func do(ctx context.Context, req request, out any) error {
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return &APIError{Status: resp.StatusCode, Body: snippet(raw)}
+		return responseError(resp.StatusCode, resp.Header, raw)
 	}
 	if out == nil || len(raw) == 0 {
 		return nil

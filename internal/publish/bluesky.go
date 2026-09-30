@@ -2,7 +2,6 @@ package publish
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -26,6 +25,10 @@ type blueskySession struct {
 	AccessJwt string `json:"accessJwt"`
 	DID       string `json:"did"`
 	Handle    string `json:"handle"`
+	// Deactivated and taken-down accounts can still sign in; the PDS says
+	// so with active=false and a status (takendown, suspended, deactivated).
+	Active *bool  `json:"active"`
+	Status string `json:"status"`
 }
 
 type strongRef struct {
@@ -49,7 +52,23 @@ func (b *Bluesky) Login(ctx context.Context) (blueskySession, error) {
 	if err != nil {
 		return s, fmt.Errorf("bluesky login failed: %w", err)
 	}
+	if s.Active != nil && !*s.Active {
+		status := s.Status
+		if status == "" {
+			status = "inactive"
+		}
+		return s, &AccountError{Status: HealthSuspended, Detail: "bluesky account @" + s.Handle + " is " + status}
+	}
 	return s, nil
+}
+
+// Check signs in, which is the one call that proves the app password works.
+func (b *Bluesky) Check(ctx context.Context) (Health, error) {
+	s, err := b.Login(ctx)
+	if err != nil {
+		return healthOf(err)
+	}
+	return Health{Status: HealthLive, Detail: "@" + s.Handle}, nil
 }
 
 func (b *Bluesky) xrpcGet(ctx context.Context, s blueskySession, method string, params url.Values, out any) error {
@@ -161,7 +180,7 @@ func (b *Bluesky) Metrics(ctx context.Context, remoteID string) (Metrics, error)
 		return nil, err
 	}
 	if len(out.Posts) == 0 {
-		return nil, errors.New("post not found (deleted?)")
+		return Metrics{MetricRemoved: true}, nil
 	}
 	p := out.Posts[0]
 	return Metrics{"likes": p.LikeCount, "reposts": p.RepostCount, "replies": p.ReplyCount, "quotes": p.QuoteCount}, nil
