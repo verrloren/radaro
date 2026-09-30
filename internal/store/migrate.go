@@ -24,6 +24,7 @@ var migrations = []migration{
 	{5, ownership},
 	{6, projectKeywords},
 	{7, projectAccounts},
+	{8, accountHealth},
 }
 
 func baseline(tx *sql.Tx) error {
@@ -139,6 +140,42 @@ ALTER TABLE drafts ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELE
 UPDATE drafts SET project_id =
     (SELECT p.id FROM projects AS p WHERE p.is_default = 1 AND p.user_id IS drafts.user_id);`, now)
 	return err
+}
+
+// accountHealth adds what publishing limits and account health need: status
+// and per-account limits on accounts, their status history, removed drafts,
+// and a pool of accounts per project and platform instead of just one.
+func accountHealth(tx *sql.Tx) error {
+	if _, err := tx.Exec(`
+ALTER TABLE accounts ADD COLUMN status TEXT NOT NULL DEFAULT 'unknown';
+ALTER TABLE accounts ADD COLUMN status_detail TEXT;
+ALTER TABLE accounts ADD COLUMN checked_at TEXT;
+ALTER TABLE accounts ADD COLUMN limited_until TEXT;
+ALTER TABLE accounts ADD COLUMN paused INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE accounts ADD COLUMN daily_limit INTEGER;
+ALTER TABLE accounts ADD COLUMN min_interval_sec INTEGER;
+ALTER TABLE accounts ADD COLUMN community_cooldown_h INTEGER;
+ALTER TABLE drafts ADD COLUMN removed_at TEXT;
+CREATE TABLE account_status_events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    platform   TEXT NOT NULL,
+    at         TEXT NOT NULL,
+    status     TEXT NOT NULL,
+    detail     TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX idx_account_status_events ON account_status_events(account_id, at);`); err != nil {
+		return err
+	}
+	return rebuildTable(tx, "project_accounts", `
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    platform   TEXT NOT NULL,
+    account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    bound_at   TEXT NOT NULL,
+    PRIMARY KEY (project_id, account_id)`,
+		`project_id, platform, account_id, bound_at`,
+		`CREATE INDEX idx_project_accounts_account ON project_accounts(account_id)`,
+		`CREATE INDEX idx_project_accounts_platform ON project_accounts(project_id, platform)`)
 }
 
 // migrate applies every step above the database's user_version.

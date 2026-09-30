@@ -12,13 +12,31 @@ import (
 // Account is a connected publishing account. Credentials are stored as JSON
 // in the local database, next to the rest of the user's data.
 type Account struct {
-	ID          int64           `json:"id"`
-	Platform    string          `json:"platform"`
-	Handle      string          `json:"handle"`
-	Credentials json.RawMessage `json:"-"`
-	CreatedAt   string          `json:"created_at"`
-	UpdatedAt   string          `json:"updated_at"`
+	ID           int64           `json:"id"`
+	Platform     string          `json:"platform"`
+	Handle       string          `json:"handle"`
+	Credentials  json.RawMessage `json:"-"`
+	Status       string          `json:"status"` // AccountUnknown, AccountLive, …
+	StatusDetail *string         `json:"status_detail"`
+	CheckedAt    *string         `json:"checked_at"`
+	LimitedUntil *string         `json:"limited_until"` // a platform rate limit, until then
+	Paused       bool            `json:"paused"`
+	// Per-account limits; nil means the platform default (publish.DefaultLimits).
+	DailyLimit         *int   `json:"daily_limit"`
+	MinIntervalSec     *int   `json:"min_interval_sec"`
+	CommunityCooldownH *int   `json:"community_cooldown_h"`
+	CreatedAt          string `json:"created_at"`
+	UpdatedAt          string `json:"updated_at"`
 }
+
+// Account statuses. Dead accounts (invalid, suspended) are never picked to publish.
+const (
+	AccountUnknown   = "unknown"   // not checked yet
+	AccountLive      = "live"      // credentials work, not suspended
+	AccountInvalid   = "invalid"   // credentials rejected (revoked, expired, wrong)
+	AccountSuspended = "suspended" // the platform suspended or took down the account
+	AccountLimited   = "limited"   // rate-limited by the platform until limited_until
+)
 
 // SaveAccount inserts or refreshes the user's account for (platform, handle).
 func (s *Store) SaveAccount(userID int64, platform, handle string, credentials any) (*Account, error) {
@@ -68,16 +86,37 @@ func (s *Store) UpdateAccountCredentials(id int64, credentials any) error {
 	return err
 }
 
-const accountColumns = `id, platform, handle, credentials, created_at, updated_at`
+const accountColumns = `id, platform, handle, credentials, status, status_detail, checked_at, limited_until, paused,
+	daily_limit, min_interval_sec, community_cooldown_h, created_at, updated_at`
 
-func scanAccount(row interface{ Scan(...any) error }) (*Account, error) {
-	var a Account
-	var creds string
-	if err := row.Scan(&a.ID, &a.Platform, &a.Handle, &creds, &a.CreatedAt, &a.UpdatedAt); err != nil {
+// accountColumnsAs is accountColumns for a query that names accounts "a".
+const accountColumnsAs = `a.id, a.platform, a.handle, a.credentials, a.status, a.status_detail, a.checked_at, a.limited_until, a.paused,
+	a.daily_limit, a.min_interval_sec, a.community_cooldown_h, a.created_at, a.updated_at`
+
+func scanAccount(row interface{ Scan(...any) error }, extra ...any) (*Account, error) {
+	var (
+		a                         Account
+		creds                     string
+		detail, checked, limited  sql.NullString
+		daily, interval, cooldown sql.NullInt64
+	)
+	dest := append([]any{&a.ID, &a.Platform, &a.Handle, &creds, &a.Status, &detail, &checked, &limited, &a.Paused,
+		&daily, &interval, &cooldown, &a.CreatedAt, &a.UpdatedAt}, extra...)
+	if err := row.Scan(dest...); err != nil {
 		return nil, err
 	}
 	a.Credentials = json.RawMessage(creds)
+	a.StatusDetail, a.CheckedAt, a.LimitedUntil = nullStr(detail), nullStr(checked), nullStr(limited)
+	a.DailyLimit, a.MinIntervalSec, a.CommunityCooldownH = nullInt(daily), nullInt(interval), nullInt(cooldown)
 	return &a, nil
+}
+
+func nullInt(v sql.NullInt64) *int {
+	if !v.Valid {
+		return nil
+	}
+	n := int(v.Int64)
+	return &n
 }
 
 // Account returns one of the user's accounts, or nil.
@@ -154,6 +193,7 @@ type Draft struct {
 	Error       *string        `json:"error"`
 	Metrics     map[string]any `json:"metrics"`
 	MetricsAt   *string        `json:"metrics_at"`
+	RemovedAt   *string        `json:"removed_at"` // published, then found removed by the platform or moderators
 	CreatedAt   string         `json:"created_at"`
 	UpdatedAt   string         `json:"updated_at"`
 	ApprovedAt  *string        `json:"approved_at"`
@@ -161,7 +201,7 @@ type Draft struct {
 }
 
 const draftColumns = `id, project_id, platform, account_id, kind, community, title, body, reply_to, query, mention_id, status,
-	remote_id, remote_url, error, metrics, metrics_at, created_at, updated_at, approved_at, published_at`
+	remote_id, remote_url, error, metrics, metrics_at, removed_at, created_at, updated_at, approved_at, published_at`
 
 func scanDraft(row interface{ Scan(...any) error }) (*Draft, error) {
 	var (
@@ -170,9 +210,10 @@ func scanDraft(row interface{ Scan(...any) error }) (*Draft, error) {
 		community, title, replyTo, query     sql.NullString
 		mention, remoteID, remoteURL, errMsg sql.NullString
 		metrics, metricsAt, approved, pub    sql.NullString
+		removed                              sql.NullString
 	)
 	if err := row.Scan(&d.ID, &project, &d.Platform, &account, &d.Kind, &community, &title, &d.Body, &replyTo, &query, &mention,
-		&d.Status, &remoteID, &remoteURL, &errMsg, &metrics, &metricsAt, &d.CreatedAt, &d.UpdatedAt, &approved, &pub); err != nil {
+		&d.Status, &remoteID, &remoteURL, &errMsg, &metrics, &metricsAt, &removed, &d.CreatedAt, &d.UpdatedAt, &approved, &pub); err != nil {
 		return nil, err
 	}
 	if project.Valid {
@@ -183,7 +224,7 @@ func scanDraft(row interface{ Scan(...any) error }) (*Draft, error) {
 	}
 	d.Community, d.Title, d.ReplyTo, d.Query = nullStr(community), nullStr(title), nullStr(replyTo), nullStr(query)
 	d.MentionID, d.RemoteID, d.RemoteURL, d.Error = nullStr(mention), nullStr(remoteID), nullStr(remoteURL), nullStr(errMsg)
-	d.MetricsAt, d.ApprovedAt, d.PublishedAt = nullStr(metricsAt), nullStr(approved), nullStr(pub)
+	d.MetricsAt, d.ApprovedAt, d.PublishedAt, d.RemovedAt = nullStr(metricsAt), nullStr(approved), nullStr(pub), nullStr(removed)
 	if metrics.Valid {
 		_ = json.Unmarshal([]byte(metrics.String), &d.Metrics)
 	}

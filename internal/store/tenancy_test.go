@@ -243,15 +243,26 @@ func TestKeywordAndProjectLimits(t *testing.T) {
 func TestUpgradeBindsExistingAccountsToDefault(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "radaro.db")
 	saved := migrations
-	migrations = saved[:len(saved)-1] // the schema just before project accounts
+	migrations = saved[:indexOfVersion(t, saved, 7)] // the schema just before project accounts
 	st, err := Open(path)
 	if err != nil {
 		migrations = saved
 		t.Fatal(err)
 	}
-	acc, _ := st.SaveAccount(0, "devto", "me", map[string]string{"k": "v"})
-	st.SaveAccount(0, "devto", "second", map[string]string{"k": "v"})
-	// Today's CreateDraft writes columns the old schema lacks.
+	// Today's SaveAccount and CreateDraft use columns the old schema lacks.
+	var accID int64
+	for _, h := range []string{"me", "second"} {
+		r, err := st.db.Exec(`INSERT INTO accounts (platform, handle, credentials, created_at, updated_at)
+			VALUES ('devto', ?, '{}', 'x', 'x')`, h)
+		if err != nil {
+			st.Close()
+			migrations = saved
+			t.Fatal(err)
+		}
+		if accID == 0 {
+			accID, _ = r.LastInsertId()
+		}
+	}
 	res, err := st.db.Exec(`INSERT INTO drafts (platform, kind, body, status, created_at, updated_at)
 		VALUES ('devto', 'post', 'b', 'draft', 'x', 'x')`)
 	st.Close()
@@ -266,7 +277,7 @@ func TestUpgradeBindsExistingAccountsToDefault(t *testing.T) {
 	}
 	defer st.Close()
 	bs, err := st.ProjectBindings(0, DefaultProjectID)
-	if err != nil || len(bs) != 1 || bs[0].Account.ID != acc.ID {
+	if err != nil || len(bs) != 1 || bs[0].Account.ID != accID {
 		t.Fatalf("bindings after upgrade = %+v, %v", bs, err)
 	}
 	got, _ := st.Draft(0, draftID)
@@ -311,12 +322,25 @@ func TestProjectAccounts(t *testing.T) {
 			t.Fatalf("project %s publishes as %+v, %v; want account %d", c.project.Name, acc, err, c.want)
 		}
 	}
-	// Rebinding replaces; one account per platform per project.
-	if _, err := st.BindAccount(u.ID, p1.ID, r2.ID); err != nil {
-		t.Fatal(err)
+	// Binding another account pools it next to the first; binding it again
+	// changes nothing. With two in the pool the draft must say which.
+	for range 2 {
+		if _, err := st.BindAccount(u.ID, p1.ID, r2.ID); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if bs, _ := st.ProjectBindings(u.ID, p1.ID); len(bs) != 1 || bs[0].Account.ID != r2.ID {
+	if bs, _ := st.ProjectBindings(u.ID, p1.ID); len(bs) != 2 || bs[0].Account.ID != r1.ID || bs[1].Account.ID != r2.ID {
 		t.Fatalf("bindings = %+v", bs)
+	}
+	pooled, _ := st.CreateDraft(NewDraft{UserID: u.ID, ProjectID: p1.ID, Platform: "reddit", Kind: "post", Title: "t", Body: "b"})
+	if _, err := st.PublishAccount(u.ID, pooled); !errors.Is(err, ErrConflict) {
+		t.Fatalf("pool of two without a pick: %v", err)
+	}
+	if ok, err := st.UnbindProjectAccount(u.ID, p1.ID, r1.ID); !ok || err != nil {
+		t.Fatalf("unbind one: %v, %v", ok, err)
+	}
+	if pool, _ := st.ProjectPool(u.ID, p1.ID, "reddit"); len(pool) != 1 || pool[0].ID != r2.ID {
+		t.Fatalf("pool after unbinding one = %+v", pool)
 	}
 	// Without a binding and with two accounts, the draft must say which.
 	def, _ := st.DefaultProjectFor(u.ID)
@@ -338,4 +362,15 @@ func TestProjectAccounts(t *testing.T) {
 	if bs, _ := st.ProjectBindings(u.ID, p2.ID); len(bs) != 0 {
 		t.Fatalf("binding survived its account: %+v", bs)
 	}
+}
+
+func indexOfVersion(t *testing.T, ms []migration, version int) int {
+	t.Helper()
+	for i, m := range ms {
+		if m.version == version {
+			return i
+		}
+	}
+	t.Fatalf("no migration step %d", version)
+	return 0
 }

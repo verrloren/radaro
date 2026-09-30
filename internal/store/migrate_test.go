@@ -149,9 +149,18 @@ func TestRebuildTableKeepsRowsReferencesAndCounter(t *testing.T) {
 			credentials TEXT NOT NULL,
 			created_at  TEXT NOT NULL,
 			updated_at  TEXT NOT NULL,
+			status      TEXT NOT NULL DEFAULT 'unknown',
+			status_detail TEXT,
+			checked_at  TEXT,
+			limited_until TEXT,
+			paused      INTEGER NOT NULL DEFAULT 0,
+			daily_limit INTEGER,
+			min_interval_sec INTEGER,
+			community_cooldown_h INTEGER,
 			UNIQUE (user_id, platform, handle),
 			CHECK (platform != '')`,
-			`id, user_id, platform, handle, credentials, created_at, updated_at`,
+			`id, user_id, platform, handle, credentials, created_at, updated_at, status, status_detail, checked_at,
+			limited_until, paused, daily_limit, min_interval_sec, community_cooldown_h`,
 			`CREATE INDEX idx_accounts_platform ON accounts(platform)`)
 	}})
 	st, err = Open(path)
