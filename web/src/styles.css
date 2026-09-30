@@ -155,6 +155,7 @@ code {
 /* ---------- form controls ---------- */
 
 input[type="text"],
+input[type="email"],
 input[type="password"],
 select {
   height: 40px;
@@ -181,6 +182,7 @@ textarea {
 }
 
 input[type="text"]:hover,
+input[type="email"]:hover,
 input[type="password"]:hover,
 textarea:hover,
 select:hover {
@@ -2412,4 +2414,139 @@ fieldset:disabled .tile {
   font-size: 13px;
   font-weight: 400;
   letter-spacing: 0;
+}
+
+/* ---------- sign-in ---------- */
+
+.auth-shell {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 32px 16px;
+}
+
+.auth-card {
+  width: min(420px, 100%);
+  padding: 30px 28px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  animation: rise 200ms var(--ease) both;
+}
+
+.auth-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.auth-card .setup-form .btn {
+  width: 100%;
+  margin-top: 4px;
+}
+
+.auth-switch {
+  text-align: center;
+}
+
+.neg-ink {
+  color: var(--neg-ink);
+}
+
+.rail-user {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.rail-user .email {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- project detail ---------- */
+
+.project-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.block-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink2);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.kw-count {
+  margin-left: 6px;
+}
+
+.kw-add {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.kw-add textarea {
+  flex: 1;
+  min-height: 40px;
+  resize: vertical;
+}
+
+.binding-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.binding-row {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+@media (max-width: 560px) {
+  .binding-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .binding-name {
+    grid-column: 1 / -1;
+  }
+}
+
+.rail-user .link-btn {
+  flex: none;
+  white-space: nowrap;
+}
+
+.rail-top-end {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* On phones the rail foot is hidden; sign-out sits next to the status pill. */
+.rail-signout {
+  display: none;
+  font-size: 12.5px;
+}
+
+.kw-add textarea {
+  font-family: var(--font-body);
+  font-size: 14px;
+}
+
+@media (max-width: 860px) {
+  .rail-signout {
+    display: inline-flex;
+  }
 }

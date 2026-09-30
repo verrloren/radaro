@@ -30,14 +30,37 @@ export interface Mention {
   theme: string | null;
 }
 
+export interface User {
+  id: number;
+  email: string;
+  is_admin: boolean;
+  created_at: string;
+}
+
+export interface AuthConfig {
+  registration_open: boolean;
+}
+
 export interface Project {
   id: number;
   name: string;
+  /** Every user has one; it cannot be deleted. */
+  is_default: boolean;
   created_at: string;
   updated_at: string;
   query_count: number;
   mention_count: number;
   queries?: string[];
+}
+
+export interface Keyword {
+  id: number;
+  project_id: number;
+  query: string;
+  sources: string[];
+  added_at: string;
+  last_scanned_at: string | null;
+  mention_count: number;
 }
 
 export interface SourceState {
@@ -175,4 +198,12 @@ export interface ConnectRequest {
   handle?: string;
   instance?: string;
   secret: string;
+  /** Also make this project publish with the new account. */
+  project_id?: number;
+}
+
+/** The account a project publishes and scans with on one platform. */
+export interface ProjectAccount {
+  platform: Platform;
+  account: Account | null;
 }
