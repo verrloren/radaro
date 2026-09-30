@@ -219,7 +219,8 @@ func TestLimiterRefills(t *testing.T) {
 func TestClientIP(t *testing.T) {
 	for _, c := range []struct{ remote, xff, want string }{
 		{"198.51.100.1:1234", "", "198.51.100.1"},
-		{"198.51.100.1:1234", "1.2.3.4", "198.51.100.1"}, // not from a local proxy: ignored
+		{"198.51.100.1:1234", "1.2.3.4", "198.51.100.1"}, // a public peer cannot claim another address
+		{"172.18.0.1:1234", "203.0.113.9", "203.0.113.9"}, // proxy through a Docker bridge
 		{"127.0.0.1:1234", "6.6.6.6, 203.0.113.9", "203.0.113.9"},
 		{"[::1]:1234", "", "::1"},
 	} {

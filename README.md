@@ -163,7 +163,7 @@ Drafts go `draft → approved → publishing → published` (or `failed`, which 
 Radaro stays one binary with one SQLite file; nothing else is needed on the server.
 
 1. Run `radaro serve` as its own user with `RADARO_DB` on persistent storage (or `docker compose up -d`, which keeps it in a volume). It binds to `127.0.0.1:8042`.
-2. Put a TLS reverse proxy in front of it; passwords and session cookies must not travel over plain HTTP. With [Caddy](https://caddyserver.com): `radaro.example.com { reverse_proxy 127.0.0.1:8042 }`. Radaro reads `X-Forwarded-Proto` and `X-Forwarded-For` from a proxy on the same machine, so cookies are `Secure` and rate limits apply per client.
+2. Put a TLS reverse proxy in front of it; passwords and session cookies must not travel over plain HTTP. With [Caddy](https://caddyserver.com): `radaro.example.com { reverse_proxy 127.0.0.1:8042 }`. Radaro reads `X-Forwarded-Proto` and `X-Forwarded-For` from a proxy on the same machine or a private network (Docker), so cookies are `Secure` and rate limits apply per client.
 3. Create your account (`radaro register --server https://radaro.example.com` or `/register`), then keep `RADARO_REGISTRATION=closed` (the default) unless others should sign up.
 4. Back up: `radaro admin backup /backups/radaro-$(date +%F).db` from cron, or stream the database continuously with [Litestream](https://litestream.io).
 

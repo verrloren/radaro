@@ -254,15 +254,15 @@ func (s *Server) rateLimit(next http.Handler) http.Handler {
 	})
 }
 
-// clientIP is the peer address, or behind a local reverse proxy the address
-// the proxy appended last to X-Forwarded-For (earlier entries are
-// client-controlled).
+// clientIP is the peer address, or behind a reverse proxy on this machine or
+// a private network (a Docker bridge) the address the proxy appended last to
+// X-Forwarded-For (earlier entries are client-controlled).
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
 	}
-	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+	if ip := net.ParseIP(host); ip != nil && (ip.IsLoopback() || ip.IsPrivate()) {
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 			parts := strings.Split(xff, ",")
 			if last := strings.TrimSpace(parts[len(parts)-1]); last != "" {

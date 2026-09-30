@@ -24,8 +24,8 @@ Reddit OAuth callback are public.
 Refresh tokens rotate on every use. Presenting an already rotated token again
 (after a 30-second grace for parallel tabs) signs out every session of that
 user. Register, login and refresh allow 10 attempts per minute per client
-(`429` beyond). Behind a reverse proxy on the same machine, the client is the
-last `X-Forwarded-For` entry, and `X-Forwarded-Proto: https` makes the cookies
+(`429` beyond). Behind a reverse proxy on the same machine or a private network (such as a
+Docker bridge), the client is the last `X-Forwarded-For` entry, and `X-Forwarded-Proto: https` makes the cookies
 `Secure`.
 
 The first user to register becomes the admin and is the only one who may
