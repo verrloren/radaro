@@ -27,7 +27,7 @@ func (s *Store) EnqueueAlerts(mentions []*model.Mention, targetKey string) (int,
 
 // PendingAlerts returns undelivered mentions for a target, oldest enqueued first.
 func (s *Store) PendingAlerts(query, targetKey string, limit int) ([]*model.Mention, error) {
-	rows, err := s.db.Query(`SELECT a.mention_id FROM alert_outbox AS a
+	rows, err := s.rdb.Query(`SELECT a.mention_id FROM alert_outbox AS a
 		JOIN mentions AS m ON m.query = a.query AND m.id = a.mention_id
 		WHERE a.query = ? AND a.target_key = ? AND a.delivered_at IS NULL
 		ORDER BY a.enqueued_at, a.mention_id LIMIT ?`, query, targetKey, limit)
@@ -89,7 +89,7 @@ func (s *Store) MarkAlerts(query string, ids []string, targetKey string, deliver
 // PendingAlertCount counts undelivered mention alerts for a target.
 func (s *Store) PendingAlertCount(query, targetKey string) (int, error) {
 	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM alert_outbox WHERE query = ? AND target_key = ? AND delivered_at IS NULL`,
+	err := s.rdb.QueryRow(`SELECT COUNT(*) FROM alert_outbox WHERE query = ? AND target_key = ? AND delivered_at IS NULL`,
 		query, targetKey).Scan(&n)
 	return n, err
 }
@@ -111,7 +111,7 @@ func (s *Store) AlertMetrics(query string, now time.Time, windowHours, baselineW
 	window := time.Duration(windowHours) * time.Hour
 	currentStart := now.Add(-window)
 	baselineStart := currentStart.Add(-window * time.Duration(baselineWindows))
-	rows, err := s.db.Query(`SELECT created_at, sentiment FROM mentions WHERE query = ? AND created_at >= ? AND created_at <= ?`,
+	rows, err := s.rdb.Query(`SELECT created_at, sentiment FROM mentions WHERE query = ? AND created_at >= ? AND created_at <= ?`,
 		query, stamp(baselineStart), stamp(now))
 	if err != nil {
 		return AlertMetrics{}, err
@@ -205,7 +205,7 @@ func (s *Store) ClearThresholdAlert(query, eventType, targetKey string, now time
 
 // PendingThresholdAlerts lists active, undelivered episodes for a target.
 func (s *Store) PendingThresholdAlerts(query, targetKey string) ([]ThresholdAlert, error) {
-	rows, err := s.db.Query(`SELECT id, text, payload FROM threshold_alerts
+	rows, err := s.rdb.Query(`SELECT id, text, payload FROM threshold_alerts
 		WHERE query = ? AND target_key = ? AND delivered_at IS NULL AND cleared_at IS NULL
 		ORDER BY triggered_at, id`, query, targetKey)
 	if err != nil {
@@ -241,7 +241,7 @@ func (s *Store) MarkThresholdAlert(id int64, deliveryErr error) error {
 // ThresholdAlertPendingCount counts active undelivered episodes for a target.
 func (s *Store) ThresholdAlertPendingCount(query, targetKey string) (int, error) {
 	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM threshold_alerts
+	err := s.rdb.QueryRow(`SELECT COUNT(*) FROM threshold_alerts
 		WHERE query = ? AND target_key = ? AND delivered_at IS NULL AND cleared_at IS NULL`, query, targetKey).Scan(&n)
 	return n, err
 }

@@ -54,7 +54,8 @@ make web                           # rebuild web/dist; commit it (CI checks that
 ## Conventions
 
 - **Tests.** Every package with logic has `_test.go` files. Network code is tested against `httptest` servers: endpoints are package variables (sources) or struct fields (publish), so tests can point them at a local server. Tests never hit the real internet.
-- **Schema changes.** Add tables or columns with `IF NOT EXISTS` DDL in `internal/store/store.go` and bump `schemaVersion`. Timestamps are fixed-width UTC strings (`store.Stamp`) so they sort lexically.
+- **Schema changes.** Append a step to `migrations` in `internal/store/migrate.go` with the next version; never edit a released step. Use `rebuildTable` when a constraint changes (SQLite cannot `ALTER` one). Timestamps are fixed-width UTC strings (`store.Stamp`) so they sort lexically.
+- **Reads and writes.** Plain reads go through `s.rdb` (a read-only pool, so they never wait for a scan's write); writes, and reads inside a write, go through `s.db`, the single writer.
 - **New scan source.** Implement `sources.Source`, register it in `registry` (`internal/sources/source.go`) with its metadata and `configured` check, add its options to `sources.Options`, `config.Load` and `.env.example`, and add a test with a fake server.
 - **New publishing platform.** Implement `publish.Publisher`, add it to `publish.Platforms` and `publish.New`, add a `connect` subcommand, update `skills/radaro/references/platforms.md` and the README table, and test it against a fake API, including the error envelope.
 - **API changes.** Update `docs/API.md`, `internal/server` tests, and the typed client in `web/src/api.ts` together.

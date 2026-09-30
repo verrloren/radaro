@@ -64,7 +64,7 @@ func scanAccount(row interface{ Scan(...any) error }) (*Account, error) {
 
 // Account returns one account, or nil.
 func (s *Store) Account(id int64) (*Account, error) {
-	a, err := scanAccount(s.db.QueryRow(`SELECT `+accountColumns+` FROM accounts WHERE id = ?`, id))
+	a, err := scanAccount(s.rdb.QueryRow(`SELECT `+accountColumns+` FROM accounts WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -79,7 +79,7 @@ func (s *Store) Accounts(platform string) ([]*Account, error) {
 		q += ` WHERE platform = ?`
 		args = append(args, platform)
 	}
-	rows, err := s.db.Query(q+` ORDER BY platform, id`, args...)
+	rows, err := s.rdb.Query(q+` ORDER BY platform, id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +208,7 @@ func (s *Store) CreateDraft(n NewDraft) (*Draft, error) {
 
 // Draft returns one draft, or nil.
 func (s *Store) Draft(id int64) (*Draft, error) {
-	d, err := scanDraft(s.db.QueryRow(`SELECT `+draftColumns+` FROM drafts WHERE id = ?`, id))
+	d, err := scanDraft(s.rdb.QueryRow(`SELECT `+draftColumns+` FROM drafts WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -228,7 +228,7 @@ func (s *Store) Drafts(status string, limit int) ([]*Draft, error) {
 		q += ` LIMIT ?`
 		args = append(args, limit)
 	}
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.rdb.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -360,7 +360,7 @@ func (s *Store) LogActivity(action string, draftID int64, detail string) error {
 
 // Activities returns the newest log entries first.
 func (s *Store) Activities(limit int) ([]Activity, error) {
-	rows, err := s.db.Query(`SELECT id, at, action, draft_id, detail FROM activity ORDER BY id DESC LIMIT ?`, limit)
+	rows, err := s.rdb.Query(`SELECT id, at, action, draft_id, detail FROM activity ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}

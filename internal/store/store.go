@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -24,8 +25,8 @@ const DefaultProjectID int64 = 1
 // timeLayout is fixed-width UTC so stored timestamps sort lexically.
 const timeLayout = "2006-01-02T15:04:05.000000Z"
 
-const schemaVersion = 3
-
+// schema is the version 3 layout. Later changes are migration steps, not
+// edits here.
 const schema = `
 CREATE TABLE IF NOT EXISTS mentions (
     id              TEXT NOT NULL,
@@ -162,7 +163,8 @@ CREATE TABLE IF NOT EXISTS source_settings (
 
 // Store wraps one SQLite database.
 type Store struct {
-	db   *sql.DB
+	db   *sql.DB // the single writer connection
+	rdb  *sql.DB // read-only pool: in WAL mode reads never wait for the writer
 	path string
 }
 
@@ -180,7 +182,7 @@ func Open(path string) (*Store, error) {
 				return nil, err
 			}
 		}
-		dsn = "file:" + path + "?_pragma=journal_mode(WAL)"
+		dsn = "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)"
 	}
 	sep := "?"
 	if strings.Contains(dsn, "?") {
@@ -191,41 +193,34 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	// One connection: SQLite serializes writers anyway, and a single
-	// connection keeps :memory: databases coherent.
+	// One writer: SQLite serializes writers anyway, and a single connection
+	// keeps :memory: databases coherent.
 	db.SetMaxOpenConns(1)
-	s := &Store{db: db, path: path}
+	s := &Store{db: db, rdb: db, path: path}
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, err
 	}
+	if path == ":memory:" {
+		return s, nil
+	}
+	rdb, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(30000)&_pragma=query_only(1)")
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	rdb.SetMaxOpenConns(max(4, runtime.NumCPU()))
+	s.rdb = rdb
 	return s, nil
 }
 
-func (s *Store) migrate() error {
-	var version int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
-		return err
-	}
-	if version >= schemaVersion {
-		return nil
-	}
-	now := stamp(time.Now())
-	if _, err := s.db.Exec(schema); err != nil {
-		return fmt.Errorf("apply schema: %w", err)
-	}
-	if _, err := s.db.Exec(
-		`INSERT OR IGNORE INTO projects (id, name, created_at, updated_at) VALUES (?, 'Default', ?, ?)`,
-		DefaultProjectID, now, now,
-	); err != nil {
-		return err
-	}
-	_, err := s.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion))
-	return err
-}
-
 // Close closes the database.
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	if s.rdb != s.db {
+		s.rdb.Close()
+	}
+	return s.db.Close()
+}
 
 // Path returns the database path.
 func (s *Store) Path() string { return s.path }
@@ -233,7 +228,7 @@ func (s *Store) Path() string { return s.path }
 // Check fails if SQLite cannot run a read and a small write transaction.
 func (s *Store) Check(ctx context.Context) error {
 	var one int
-	if err := s.db.QueryRowContext(ctx, "SELECT 1").Scan(&one); err != nil {
+	if err := s.rdb.QueryRowContext(ctx, "SELECT 1").Scan(&one); err != nil {
 		return err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -402,7 +397,7 @@ func (s *Store) ExistingIDs(query string, ids []string) (map[string]bool, error)
 		for _, id := range chunk {
 			args = append(args, id)
 		}
-		rows, err := s.db.Query(`SELECT id FROM mentions WHERE query = ? AND id IN (`+placeholders(len(chunk))+`)`, args...)
+		rows, err := s.rdb.Query(`SELECT id FROM mentions WHERE query = ? AND id IN (`+placeholders(len(chunk))+`)`, args...)
 		if err != nil {
 			return nil, err
 		}
@@ -451,7 +446,7 @@ func (s *Store) Mentions(f MentionFilter) ([]*model.Mention, error) {
 		q += " LIMIT ?"
 		args = append(args, f.Limit)
 	}
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.rdb.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -516,7 +511,7 @@ func (s *Store) Tracking(query string) (*Tracking, error) {
 		srcs    string
 		scanned sql.NullString
 	)
-	err := s.db.QueryRow(`SELECT query, sources, created_at, updated_at, last_scanned_at FROM tracked_queries WHERE query = ?`, query).
+	err := s.rdb.QueryRow(`SELECT query, sources, created_at, updated_at, last_scanned_at FROM tracked_queries WHERE query = ?`, query).
 		Scan(&t.Query, &srcs, &t.CreatedAt, &t.UpdatedAt, &scanned)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -549,7 +544,7 @@ func (s *Store) Summary(sc Scope) (Summary, error) {
 		return Summary{}, err
 	}
 	out := Summary{BySentiment: map[string]int{}, BySource: map[string]int{}, ByDay: map[string]int{}}
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM mentions`+where, args...).Scan(&out.Total); err != nil {
+	if err := s.rdb.QueryRow(`SELECT COUNT(*) FROM mentions`+where, args...).Scan(&out.Total); err != nil {
 		return out, err
 	}
 	for _, g := range []struct {
@@ -582,7 +577,7 @@ func (s *Store) Timeseries(sc Scope) ([]DayPoint, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Query(`SELECT substr(created_at, 1, 10) AS d,
+	rows, err := s.rdb.Query(`SELECT substr(created_at, 1, 10) AS d,
 			COALESCE(SUM(sentiment = 'positive'), 0),
 			COALESCE(SUM(sentiment = 'neutral' OR sentiment IS NULL), 0),
 			COALESCE(SUM(sentiment = 'negative'), 0),
@@ -615,7 +610,7 @@ func (s *Store) Themes(sc Scope, limit int) ([]ThemeCount, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Query(`SELECT theme, COUNT(*) AS n FROM mentions WHERE theme IS NOT NULL AND theme != ''`+
+	rows, err := s.rdb.Query(`SELECT theme, COUNT(*) AS n FROM mentions WHERE theme IS NOT NULL AND theme != ''`+
 		where+` GROUP BY theme ORDER BY n DESC, theme LIMIT ?`, append(args, limit)...)
 	if err != nil {
 		return nil, err
@@ -645,7 +640,7 @@ func NetSentiment(sum Summary) float64 {
 // --- helpers ----------------------------------------------------------------
 
 func (s *Store) strings(q string, args ...any) ([]string, error) {
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.rdb.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -662,7 +657,7 @@ func (s *Store) strings(q string, args ...any) ([]string, error) {
 }
 
 func (s *Store) counts(dst map[string]int, q string, args ...any) error {
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.rdb.Query(q, args...)
 	if err != nil {
 		return err
 	}

@@ -30,7 +30,7 @@ const projectSelect = `SELECT p.id, p.name, p.created_at, p.updated_at,
 
 // Projects lists every project, Default first, then by name.
 func (s *Store) Projects() ([]Project, error) {
-	rows, err := s.db.Query(projectSelect+` GROUP BY p.id
+	rows, err := s.rdb.Query(projectSelect+` GROUP BY p.id
 		ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.name COLLATE NOCASE`, DefaultProjectID)
 	if err != nil {
 		return nil, err
@@ -50,7 +50,7 @@ func (s *Store) Projects() ([]Project, error) {
 // Project returns one project with its keywords, or nil when it does not exist.
 func (s *Store) Project(id int64) (*Project, error) {
 	var p Project
-	err := s.db.QueryRow(projectSelect+` WHERE p.id = ? GROUP BY p.id`, id).
+	err := s.rdb.QueryRow(projectSelect+` WHERE p.id = ? GROUP BY p.id`, id).
 		Scan(&p.ID, &p.Name, &p.CreatedAt, &p.UpdatedAt, &p.QueryCount, &p.MentionCount)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil

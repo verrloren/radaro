@@ -9,7 +9,7 @@ import (
 // SourceSettings returns the source credentials saved from the dashboard,
 // keyed by source then field.
 func (s *Store) SourceSettings() (map[string]map[string]string, error) {
-	rows, err := s.db.Query(`SELECT source, settings FROM source_settings`)
+	rows, err := s.rdb.Query(`SELECT source, settings FROM source_settings`)
 	if err != nil {
 		return nil, err
 	}
