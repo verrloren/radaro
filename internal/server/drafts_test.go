@@ -26,7 +26,9 @@ func (f *fakePublisher) Publish(_ context.Context, p publish.Post) (publish.Resu
 	return publish.Result{RemoteID: "r1", URL: "https://example.test/r1"}, nil
 }
 
-func (f *fakePublisher) Metrics(context.Context, string) (publish.Metrics, error) { return f.metrics, nil }
+func (f *fakePublisher) Metrics(context.Context, string) (publish.Metrics, error) {
+	return f.metrics, nil
+}
 
 func TestDraftLifecycleOverHTTP(t *testing.T) {
 	srv, _ := newTestServer(t, &config.Config{Sources: []string{"hackernews"}, Registration: "open"})
