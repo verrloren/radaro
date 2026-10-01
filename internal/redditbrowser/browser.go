@@ -231,8 +231,9 @@ func (s *Session) fillLogin(ctx context.Context) error {
 	}
 	if filled {
 		s.loginUser, s.loginPassword = "", ""
+		return s.run(ctx, chromedp.Sleep(500*time.Millisecond))
 	}
-	return s.run(ctx, chromedp.Sleep(500*time.Millisecond))
+	return nil
 }
 
 func (s *Session) Screenshot(ctx context.Context) (Screen, error) {

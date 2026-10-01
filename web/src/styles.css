@@ -3356,7 +3356,18 @@ a.auth-back:hover {
 
 /* ---------- end drafts ---------- */
 
-.reddit-browser-screen { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+.modal:has(.reddit-browser-screen) {
+  width: min(1100px, calc(100vw - 32px));
+}
+
+.reddit-browser-screen {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
 
 /* ---------- project account pool (ProjectAccounts) ---------- */
 

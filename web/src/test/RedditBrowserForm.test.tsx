@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api, ApiError } from "../api";
@@ -41,6 +41,52 @@ describe("Reddit browser sign-in", () => {
     await user.click(screen.getByRole("button", { name: "Connect Reddit" }));
     await screen.findByLabelText("Interactive Reddit sign-in");
     view.unmount(); expect(api.cancelRedditBrowser).toHaveBeenCalledWith("s1");
+  });
+  it("delivers rapid clicks in order while the previous screen is loading", async () => {
+    const user = userEvent.setup(); render(<RedditBrowserForm />);
+    await user.type(await screen.findByLabelText("Reddit login or email"), "alice");
+    await user.type(screen.getByLabelText("Reddit password"), "pass");
+    await user.click(screen.getByRole("button", { name: "Connect Reddit" }));
+    const image = await screen.findByLabelText("Interactive Reddit sign-in");
+    await waitFor(() => expect((screen.getByRole("button", { name: "Complete connection" }) as HTMLButtonElement).disabled).toBe(false));
+    vi.spyOn(image, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 1000, height: 720 } as DOMRect);
+    let resolve!: (value: typeof picture) => void;
+    vi.mocked(api.redditBrowserInput).mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+    fireEvent.click(image, { clientX: 100, clientY: 100 });
+    fireEvent.click(image, { clientX: 300, clientY: 100 });
+    fireEvent.click(image, { clientX: 500, clientY: 100 });
+    await waitFor(() => expect(api.redditBrowserInput).toHaveBeenCalledTimes(1));
+    await act(async () => { resolve(picture); });
+    await waitFor(() => expect(api.redditBrowserInput).toHaveBeenCalledTimes(3));
+    expect(vi.mocked(api.redditBrowserInput).mock.calls.map((call) => call[1])).toEqual([
+      { kind: "click", x: 100, y: 100 }, { kind: "click", x: 300, y: 100 }, { kind: "click", x: 500, y: 100 },
+    ]);
+  });
+  it("refreshes delayed image changes without dropping clicks or polling after close", async () => {
+    const interval = vi.spyOn(window, "setInterval");
+    const clearInterval = vi.spyOn(window, "clearInterval");
+    const user = userEvent.setup(); const view = render(<RedditBrowserForm />);
+    await user.type(await screen.findByLabelText("Reddit login or email"), "alice");
+    await user.type(screen.getByLabelText("Reddit password"), "pass");
+    await user.click(screen.getByRole("button", { name: "Connect Reddit" }));
+    await screen.findByLabelText("Interactive Reddit sign-in");
+    await waitFor(() => expect((screen.getByRole("button", { name: "Complete connection" }) as HTMLButtonElement).disabled).toBe(false));
+    const timerIndex = interval.mock.calls.findIndex((call) => call[1] === 1000);
+    const refresh = interval.mock.calls[timerIndex][0] as () => void;
+    const timer = interval.mock.results[timerIndex].value;
+    let resolve!: (value: typeof picture) => void;
+    vi.mocked(api.redditBrowserInput).mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+    await act(async () => { refresh(); });
+    expect(api.redditBrowserInput).toHaveBeenCalledWith("s1", { kind: "refresh" });
+    fireEvent.keyDown(screen.getByLabelText("Interactive Reddit sign-in"), { key: "Tab" });
+    await act(async () => { refresh(); refresh(); });
+    expect(api.redditBrowserInput).toHaveBeenCalledTimes(1);
+    await act(async () => { resolve({ ...picture, image: "bmV3" }); });
+    expect(api.redditBrowserInput).toHaveBeenLastCalledWith("s1", { kind: "key", key: "Tab" });
+    view.unmount();
+    expect(clearInterval).toHaveBeenCalledWith(timer);
+    await act(async () => { refresh(); });
+    expect(api.redditBrowserInput).toHaveBeenCalledTimes(2);
   });
   it("shows a server setup error without accepting fake credentials", async () => {
     vi.mocked(api.redditBrowser).mockResolvedValue({ available: false });

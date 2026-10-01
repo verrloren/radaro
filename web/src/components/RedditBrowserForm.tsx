@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent } from "react";
 import { api, ApiError, errorMessage } from "../api";
 import { useAsync } from "../hooks";
 import type { BrowserInput, BrowserScreen } from "../types";
@@ -16,7 +16,10 @@ export function RedditBrowserForm({ projectId, onDone }: Readonly<{ projectId?: 
   const [error, setError] = useState<string | null>(null);
   const session = useRef<string | null>(null);
   const mounted = useRef(true);
-  const pending = useRef(false);
+  const pending = useRef(0);
+  const queue = useRef(Promise.resolve());
+  const finishing = useRef(false);
+  const refreshFailed = useRef(false);
   const startController = useRef<AbortController | null>(null);
   useEffect(() => {
     mounted.current = true;
@@ -24,6 +27,7 @@ export function RedditBrowserForm({ projectId, onDone }: Readonly<{ projectId?: 
   }, []);
   const finish = async (showError = true) => {
     if (!session.current) return;
+    finishing.current = true;
     try {
       await api.finishRedditBrowser(session.current);
       session.current = null;
@@ -31,7 +35,7 @@ export function RedditBrowserForm({ projectId, onDone }: Readonly<{ projectId?: 
     } catch (err) {
       if (mounted.current && showError) setError(errorMessage(err));
       if (!(err instanceof ApiError && err.status === 409)) throw err;
-    }
+    } finally { finishing.current = false; }
   };
   const start = async (e: FormEvent) => {
     e.preventDefault(); setBusy(true); setError(null);
@@ -39,25 +43,46 @@ export function RedditBrowserForm({ projectId, onDone }: Readonly<{ projectId?: 
     try {
       const res = await api.startRedditBrowser({ username: username.trim(), password, proxy_url: proxy.trim(), project_id: projectId }, ctrl.signal);
       if (!mounted.current) { void api.cancelRedditBrowser(res.session_id).catch(() => {}); return; }
-      session.current = res.session_id; setPassword(""); setProxy(""); setScreen(res.screen);
+      session.current = res.session_id; refreshFailed.current = false; setPassword(""); setProxy(""); setScreen(res.screen);
       await finish(false);
     } catch (err) { if (mounted.current) setError(errorMessage(err)); }
     finally { if (mounted.current) setBusy(false); }
   };
-  const input = async (value: BrowserInput) => {
-    if (!session.current || pending.current) return;
-    pending.current = true; setBusy(true); setError(null);
-    try { const res = await api.redditBrowserInput(session.current, value); if (mounted.current) setScreen(res); }
-    catch (err) { if (mounted.current) setError(errorMessage(err)); }
-    finally { pending.current = false; if (mounted.current) setBusy(false); }
-  };
+  const input = useCallback((value: BrowserInput, background = false) => {
+    const current = session.current;
+    if (!mounted.current || !current || finishing.current) return;
+    pending.current++;
+    if (!background) { refreshFailed.current = false; setBusy(true); setError(null); }
+    // Preserve every user action while keeping screenshots and inputs in order.
+    queue.current = queue.current.then(async () => {
+      if (!mounted.current || session.current !== current) return;
+      try {
+        const res = await api.redditBrowserInput(current, value);
+        if (mounted.current && session.current === current) setScreen(res);
+      } catch (err) {
+        if (mounted.current && session.current === current) { refreshFailed.current = true; setError(errorMessage(err)); }
+      }
+    }).finally(() => {
+      pending.current--;
+      if (mounted.current && pending.current === 0 && !finishing.current) setBusy(false);
+    });
+    return queue.current;
+  }, []);
+  const hasScreen = screen !== null;
+  useEffect(() => {
+    if (!hasScreen || busy) return;
+    const timer = window.setInterval(() => {
+      if (!pending.current && !finishing.current && !refreshFailed.current) void input({ kind: "refresh" }, true);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [hasScreen, busy, input]);
   const click = (e: MouseEvent<HTMLImageElement>) => {
-    if (!screen || busy) return;
+    if (!screen) return;
     e.currentTarget.focus(); const rect = e.currentTarget.getBoundingClientRect();
     void input({ kind: "click", x: (e.clientX - rect.left) * screen.width / rect.width, y: (e.clientY - rect.top) * screen.height / rect.height });
   };
   const key = (e: KeyboardEvent<HTMLImageElement>) => {
-    if (busy || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (["Enter", "Tab", "Backspace", "Escape", "Delete", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) { e.preventDefault(); void input({ kind: "key", key: e.key }); }
   };
   if (available.loading && !available.data) return <Loading label="Checking browser connection" />;
