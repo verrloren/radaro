@@ -297,8 +297,16 @@ does not exist.
 | DELETE | `/api/accounts/{id}` | — | `{"deleted": true}`; drafts keep their text |
 | POST | `/api/accounts/reddit/authorize` | `{"client_id"?: string, "client_secret"?: string, "project_id"?: number}` | `{"authorize_url": string, "redirect_uri": string}` — open `authorize_url`; omitted client ID reuses the user's first connected Reddit account's app; the state is single use and expires in 10 minutes |
 | GET | `/api/accounts/reddit/app` | — | `{"configured": boolean}` for this user's reusable Reddit app; no app secret returned |
+| GET | `/api/accounts/reddit/browser` | — | `{"available": boolean}` for Chromium on this server |
+| POST | `/api/accounts/reddit/browser` | `{"username": string, "password": string, "proxy_url"?: string, "project_id"?: number}` | `201 {"session_id", "expires_at", "screen": {"image", "width", "height"}}`; starts an isolated Reddit browser sign-in; image is base64 PNG, passwords are not persisted |
+| POST | `/api/accounts/reddit/browser/{session}/input` | `{"kind": "refresh" \| "click" \| "text" \| "key" \| "scroll", "x"?, "y"?, "text"?, "key"?, "delta"?}` | Updated browser screen; coordinates are in the returned viewport pixels; CAPTCHA and 2FA are completed by the user |
+| POST | `/api/accounts/reddit/browser/{session}/finish` | `{}` | `201 Account` after the browser identity is verified and cookies saved server-side; `409` while verification is incomplete |
+| DELETE | `/api/accounts/reddit/browser/{session}` | — | `{"cancelled": true}`; closes the pending browser |
+| PUT | `/api/accounts/{id}/browser/proxy` | `{"proxy_url": string}` | `{"configured": boolean}`; changes this browser account's proxy, empty restores a direct connection |
 | GET | `/oauth/reddit/callback` | Reddit's `?state=&code=` | `303` to `/?v=setup&connected=reddit`, or `&connect_error=<message>` |
 
 `net` is `(positive − negative) / total`, in `[-1, 1]`.
 
 Source keys saved through `/api/settings/sources` override the matching `RADARO_*` variables field by field and apply to the next scan without a restart. The Reddit redirect URI is the callback on the address the dashboard is open at (for example `http://127.0.0.1:8042/oauth/reddit/callback`); it must match the one registered in the Reddit app.
+
+Browser sign-ins belong to the signed-in user, expire after ten minutes, and are limited to two pending sessions per user and four simultaneous Chromium processes per server. Another user's sign-in returns `404`. Screens are not cached. Cookies and proxy credentials never appear in API responses; `AccountView.browser.proxy_configured` reports only whether a browser account has its own proxy. HTTP, HTTPS and SOCKS5 proxies support authentication. A failed proxy never falls back to a direct connection. Existing OAuth accounts retain their API connector. Browser accounts use website forms for publication and website pages for scans, metrics and rules. Their publication ID is the resulting Reddit permalink. If submission was dispatched but confirmation is missing, the draft stays `publishing` and must be checked on Reddit before any retry.

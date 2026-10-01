@@ -7,9 +7,11 @@ import { RedditForm } from "../components/ConnectForms";
 describe("RedditForm", () => {
   it("reuses a configured app and gives a link for a private window", async () => {
     vi.spyOn(api, "redditApp").mockResolvedValue({ configured: true });
+    vi.spyOn(api,"redditBrowser").mockResolvedValue({available:true});
     vi.spyOn(api, "redditAuthorize").mockResolvedValue({ authorize_url: "https://www.reddit.com/api/v1/authorize?state=x", redirect_uri: "http://localhost/oauth/reddit/callback" });
     const user = userEvent.setup();
     render(<RedditForm projectId={3} />);
+    await user.click(screen.getByRole("button",{name:"OAuth app"}));
     await user.click(await screen.findByRole("button", { name: "Add another Reddit account" }));
     expect(api.redditAuthorize).toHaveBeenCalledWith("", "", 3);
     expect(await screen.findByLabelText("Reddit authorization link")).toBeTruthy();
@@ -19,7 +21,9 @@ describe("RedditForm", () => {
 
   it("asks for app credentials on first connection", async () => {
     vi.spyOn(api, "redditApp").mockResolvedValue({ configured: false });
+    vi.spyOn(api,"redditBrowser").mockResolvedValue({available:true});
     render(<RedditForm />);
+    await userEvent.setup().click(screen.getByRole("button",{name:"OAuth app"}));
     expect(await screen.findByLabelText("Client ID")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Continue to Reddit" })).toBeTruthy();
   });

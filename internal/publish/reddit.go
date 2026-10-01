@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/verrloren/radaro/internal/redditbrowser"
 )
 
 var (
@@ -23,14 +25,14 @@ var (
 // and read them back for metrics.
 const RedditScopes = "identity submit read"
 
-// RedditCredentials come from `radaro connect reddit`: the user's own Reddit
-// app (reddit.com/prefs/apps) plus the permanent refresh token it granted.
+// RedditCredentials hold either OAuth app credentials or a browser session.
 type RedditCredentials struct {
-	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret"`
-	RedirectURI  string `json:"redirect_uri"`
-	RefreshToken string `json:"refresh_token"`
-	Username     string `json:"username"`
+	ClientID     string                     `json:"client_id"`
+	ClientSecret string                     `json:"client_secret"`
+	RedirectURI  string                     `json:"redirect_uri"`
+	RefreshToken string                     `json:"refresh_token"`
+	Username     string                     `json:"username"`
+	Browser      *redditbrowser.Credentials `json:"browser,omitempty"`
 }
 
 // Reddit submits self posts and comments.
@@ -234,6 +236,10 @@ func redditWait(msg string) time.Duration {
 }
 
 func (r *Reddit) Publish(ctx context.Context, p Post) (Result, error) {
+	if r.Creds.Browser != nil {
+		res, err := redditbrowser.Publish(ctx, *r.Creds.Browser, redditbrowser.Post{Kind: p.Kind, Community: p.Community, Title: p.Title, Body: p.Body, ReplyTo: p.ReplyTo})
+		return Result{RemoteID: res.RemoteID, URL: res.URL}, browserError(err)
+	}
 	var out redditJSON
 	if p.Kind == "reply" {
 		thing, err := RedditThingID(p.ReplyTo)
@@ -287,6 +293,10 @@ func subredditName(s string) string {
 }
 
 func (r *Reddit) Metrics(ctx context.Context, remoteID string) (Metrics, error) {
+	if r.Creds.Browser != nil {
+		m, err := redditbrowser.Metrics(ctx, *r.Creds.Browser, remoteID)
+		return Metrics(m), browserError(err)
+	}
 	var out struct {
 		Data struct {
 			Children []struct {
@@ -324,6 +334,13 @@ func (r *Reddit) Metrics(ctx context.Context, remoteID string) (Metrics, error) 
 
 // Check verifies the refresh token and asks Reddit whether the account is suspended.
 func (r *Reddit) Check(ctx context.Context) (Health, error) {
+	if r.Creds.Browser != nil {
+		err := redditbrowser.WithAccount(ctx, *r.Creds.Browser, func(*redditbrowser.Session) error { return nil })
+		if err != nil {
+			return healthOf(browserError(err))
+		}
+		return Health{Status: HealthLive, Detail: "u/" + r.Creds.Username + " (browser)"}, nil
+	}
 	var me struct {
 		Name        string `json:"name"`
 		IsSuspended bool   `json:"is_suspended"`
@@ -339,6 +356,14 @@ func (r *Reddit) Check(ctx context.Context) (Health, error) {
 
 // SubredditRules returns a subreddit's posted rules.
 func (r *Reddit) SubredditRules(ctx context.Context, subreddit string) ([]SubredditRule, error) {
+	if r.Creds.Browser != nil {
+		rules, err := redditbrowser.Rules(ctx, *r.Creds.Browser, subredditName(subreddit))
+		out := make([]SubredditRule, 0, len(rules))
+		for _, rule := range rules {
+			out = append(out, SubredditRule{Name: rule.Name, Description: rule.Description})
+		}
+		return out, browserError(err)
+	}
 	sr := subredditName(subreddit)
 	if sr == "" {
 		return nil, errors.New("subreddit is required")
@@ -357,4 +382,11 @@ func (r *Reddit) SubredditRules(ctx context.Context, subreddit string) ([]Subred
 		rules = append(rules, SubredditRule{Name: rule.ShortName, Description: rule.Description})
 	}
 	return rules, nil
+}
+
+func browserError(err error) error {
+	if errors.Is(err, redditbrowser.ErrSession) {
+		return &AccountError{Status: HealthInvalid, Detail: err.Error()}
+	}
+	return err
 }

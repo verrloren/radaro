@@ -17,7 +17,7 @@ Radaro is a single Go binary for self-hosted social listening and human-approved
 
 Design constraints, don't break them:
 
-- **One self-contained binary.** No runtime, no Docker, and no external service is required. The SQLite driver is pure Go (`modernc.org/sqlite`), so builds use `CGO_ENABLED=0`. The dashboard is embedded with `go:embed`.
+- **Go binary with embedded dashboard.** The SQLite driver is pure Go (`modernc.org/sqlite`), so builds use `CGO_ENABLED=0`. Reddit browser connections require Chromium on the server; the Docker image includes it. Other connectors do not require a browser. The user explicitly authorized this additional runtime.
 - **The binary has no built-in LLM agent.** The user's own coding agent does the thinking; Radaro provides data, state and platform access. Keep the CLI `--json`-friendly for agents.
 - **Humans approve every publish.** Only drafts in status `approved` can be published, and publish claims the draft (`publishing`) before any network call. Don't add shortcuts around this.
 - **Everything is per user.** Every `/api/*` route except sign-in sits behind `requireAuth` (a test walks all routes). Store methods take the user id and filter in SQL; another user's resource answers `404`, like a missing one. User id 0 means the server itself (admin commands, demo) and is never used by handlers. Mentions and scan state are shared per keyword on purpose.

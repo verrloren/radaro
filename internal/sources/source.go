@@ -19,6 +19,7 @@ import (
 
 	"github.com/verrloren/radaro/internal/model"
 	"github.com/verrloren/radaro/internal/netproxy"
+	"github.com/verrloren/radaro/internal/redditbrowser"
 )
 
 // UserAgent identifies Radaro to source APIs.
@@ -44,6 +45,7 @@ type Options struct {
 	RedditClientSecret  string
 	RedditAccessToken   string
 	RedditRefreshToken  string
+	RedditBrowser       *redditbrowser.Credentials
 	MastodonInstance    string
 	MastodonAccessToken string
 	RSSFeeds            []string
@@ -70,10 +72,10 @@ var registry = []entry{
 	{Info{"hackernews", "Hacker News", "Y", "#ff6a3d", false}, always, func(Options) Source { return &HackerNews{} }},
 	{Info{"reddit", "Reddit", "r/", "#ff4f3f", true},
 		func(o Options) bool {
-			return o.RedditAccessToken != "" || (o.RedditClientID != "" && (o.RedditClientSecret != "" || o.RedditRefreshToken != ""))
+			return o.RedditBrowser != nil || o.RedditAccessToken != "" || (o.RedditClientID != "" && (o.RedditClientSecret != "" || o.RedditRefreshToken != ""))
 		},
 		func(o Options) Source {
-			return &Reddit{ClientID: o.RedditClientID, ClientSecret: o.RedditClientSecret, RefreshToken: o.RedditRefreshToken, AccessToken: o.RedditAccessToken}
+			return &Reddit{ClientID: o.RedditClientID, ClientSecret: o.RedditClientSecret, RefreshToken: o.RedditRefreshToken, AccessToken: o.RedditAccessToken, Browser: o.RedditBrowser}
 		}},
 	{Info{"mastodon", "Mastodon", "@", "#7c7fff", true},
 		func(o Options) bool { return o.MastodonAccessToken != "" },

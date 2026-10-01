@@ -1,0 +1,11 @@
+.git
+.env
+.env.*
+!.env.example
+.scratch
+radaro
+web/node_modules
+web/coverage
+*.db
+*.db-wal
+*.db-shm

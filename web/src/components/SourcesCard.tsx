@@ -205,7 +205,7 @@ export function SourcesCard({ isAdmin, meta, settings, accounts, notice, trackin
       )}
       {dialog?.kind === "account" && (
         <Modal title={`Connect ${dialog.platform.label}`} onClose={() => setDialog(null)}>
-          {dialog.platform.name === "reddit" ? <RedditForm /> : <ConnectForm platform={dialog.platform} onDone={done} />}
+          {dialog.platform.name === "reddit" ? <RedditForm onDone={done} /> : <ConnectForm platform={dialog.platform} onDone={done} />}
         </Modal>
       )}
       {dialog?.kind === "import" && (

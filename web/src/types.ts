@@ -232,6 +232,7 @@ export interface AccountLimits {
 
 /** An account as GET /api/accounts returns it. */
 export interface AccountView extends Account {
+  browser?: { proxy_configured: boolean };
   limits: AccountLimits;
   /** Platform defaults, independent of this account's overrides. */
   default_limits?: Omit<AccountLimits, "custom">;
@@ -299,6 +300,10 @@ export interface AccountImportRow {
   status: string;
   error?: string;
 }
+
+export interface BrowserScreen { image: string; width: number; height: number }
+export type BrowserInput = { kind: "click"; x: number; y: number } | { kind: "text"; text: string } | { kind: "key"; key: string } | { kind: "scroll"; delta: number } | { kind: "refresh" };
+export interface RedditBrowserRequest {username: string; password: string; proxy_url?: string; project_id?: number}
 
 export interface AccountImportResult {
   results: AccountImportRow[];

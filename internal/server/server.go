@@ -24,20 +24,23 @@ import (
 	"github.com/verrloren/radaro/internal/outbox"
 	"github.com/verrloren/radaro/internal/pipeline"
 	"github.com/verrloren/radaro/internal/publish"
+	"github.com/verrloren/radaro/internal/redditbrowser"
 	"github.com/verrloren/radaro/internal/sources"
 	"github.com/verrloren/radaro/internal/store"
 )
 
 // Server holds what the handlers need.
 type Server struct {
-	cfg     *config.Config
-	store   *store.Store
-	version string
-	assets  fs.FS // built dashboard (web/dist)
-	oauth   oauthStates
-	auth    *auth.Service
-	limiter *limiter
-	outbox  *outbox.Service
+	cfg               *config.Config
+	store             *store.Store
+	version           string
+	assets            fs.FS // built dashboard (web/dist)
+	oauth             oauthStates
+	auth              *auth.Service
+	limiter           *limiter
+	outbox            *outbox.Service
+	browserLogins     browserLogins
+	openRedditBrowser func(context.Context, string, bool) (redditBrowser, error)
 
 	// connect and redditExchange reach the platforms; tests replace them.
 	connect        func(ctx context.Context, platform string, in publish.ConnectInput) (string, any, error)
@@ -60,7 +63,10 @@ func New(cfg *config.Config, st *store.Store, version string, assets fs.FS) (*Se
 	}
 	s := &Server{
 		cfg: cfg, store: st, version: version, assets: assets, auth: a, limiter: newLimiter(10, 10),
-		connect:        publish.Connect,
+		connect: publish.Connect,
+		openRedditBrowser: func(ctx context.Context, proxy string, login bool) (redditBrowser, error) {
+			return redditbrowser.Open(ctx, proxy, login)
+		},
 		newPublisher:   publish.New,
 		redditExchange: func(ctx context.Context, r *publish.Reddit, code string) error { return r.ExchangeCode(ctx, code) },
 	}
@@ -140,6 +146,12 @@ func (s *Server) Handler() http.Handler {
 			r.Delete("/accounts/{id}", s.deleteAccount)
 			r.Post("/accounts/reddit/authorize", s.redditAuthorize)
 			r.Get("/accounts/reddit/app", s.redditApp)
+			r.Get("/accounts/reddit/browser", s.redditBrowserAvailable)
+			r.Post("/accounts/reddit/browser", s.startRedditBrowser)
+			r.Post("/accounts/reddit/browser/{session}/input", s.redditBrowserInput)
+			r.Post("/accounts/reddit/browser/{session}/finish", s.finishRedditBrowser)
+			r.Delete("/accounts/reddit/browser/{session}", s.cancelRedditBrowser)
+			r.Put("/accounts/{id}/browser/proxy", s.updateRedditBrowserProxy)
 		})
 		r.NotFound(func(w http.ResponseWriter, _ *http.Request) { writeError(w, http.StatusNotFound, "not found") })
 	})

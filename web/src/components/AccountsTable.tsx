@@ -6,6 +6,7 @@ import { SourceIcon, type BadgeSource } from "./SourceBadge";
 import { ErrorLine } from "./Status";
 import { AccountsLimitsForm } from "./AccountsLimitsForm";
 import { Modal } from "./ui/Modal";
+import { AccountProxyForm } from "./AccountProxyForm";
 
 /** The icon for a publishing platform; Dev.to has no bundled logo. */
 export function platformSource(name: string, label: string): BadgeSource {
@@ -87,6 +88,7 @@ export function AccountsTable({ accounts, platforms, onChanged }: Readonly<Props
   const [busy, setBusy] = useState<Busy>(null);
   const [confirm, setConfirm] = useState<number | null>(null);
   const [limits, setLimits] = useState<AccountView | null>(null);
+  const [proxy,setProxy]=useState<AccountView|null>(null);
   const [error, setError] = useState<string | null>(null);
   const label = (name: string) => platforms.find((p) => p.name === name)?.label ?? name;
 
@@ -190,6 +192,7 @@ export function AccountsTable({ accounts, platforms, onChanged }: Readonly<Props
                         <button type="button" className="btn ghost sm" disabled={rowBusy} onClick={() => setLimits(a)}>
                           Limits
                         </button>
+                        {a.browser&&<button type="button" className="btn ghost sm" disabled={rowBusy} onClick={()=>setProxy(a)}>Proxy</button>}
                         <button type="button" className="btn ghost danger sm" disabled={rowBusy} onClick={() => setConfirm(a.id)}>
                           Disconnect
                         </button>
@@ -224,6 +227,7 @@ export function AccountsTable({ accounts, platforms, onChanged }: Readonly<Props
           />
         </Modal>
       )}
+      {proxy&&<Modal title={`Proxy · ${proxy.handle}`} onClose={()=>setProxy(null)}><AccountProxyForm account={proxy} onDone={()=>{setProxy(null);onChanged();}}/></Modal>}
     </>
   );
 }

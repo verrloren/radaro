@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -45,6 +46,11 @@ type accountView struct {
 	Quota         *outbox.Quota         `json:"quota,omitempty"`
 	Activity      store.AccountActivity `json:"activity"`
 	DefaultLimits limitsView            `json:"default_limits"`
+	Browser       *browserAccountView   `json:"browser,omitempty"`
+}
+
+type browserAccountView struct {
+	ProxyConfigured bool `json:"proxy_configured"`
 }
 
 // accountViews decorates the user's accounts.
@@ -56,6 +62,12 @@ func (s *Server) accountViews(uid int64, accs []*store.Account) ([]accountView, 
 	out := make([]accountView, 0, len(accs))
 	for _, acc := range accs {
 		v := accountView{Account: acc, Limits: outbox.ViewLimits(acc), Activity: activity[acc.ID]}
+		if acc.Platform == "reddit" {
+			var c publish.RedditCredentials
+			if json.Unmarshal(acc.Credentials, &c) == nil && c.Browser != nil {
+				v.Browser = &browserAccountView{ProxyConfigured: c.Browser.Proxy != ""}
+			}
+		}
 		v.Activity.AccountID = acc.ID
 		// A quota that cannot be computed is left out rather than failing the list.
 		if q, err := s.outbox.Quota(acc, "", ""); err == nil {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/verrloren/radaro/internal/model"
+	"github.com/verrloren/radaro/internal/redditbrowser"
 )
 
 var (
@@ -25,9 +26,26 @@ type Reddit struct {
 	ClientSecret string // empty for an "installed app" with a refresh token
 	RefreshToken string // from a connected account; searches as that user
 	AccessToken  string // minted once and reused across backfill pages
+	Browser      *redditbrowser.Credentials
 }
 
 func (s *Reddit) FetchPage(ctx context.Context, query string, limit int, cursor string, since time.Time) (Page, error) {
+	if s.Browser != nil {
+		page, err := redditbrowser.Search(ctx, *s.Browser, query, cursor, minInt(limit, 100))
+		if err != nil {
+			return Page{}, err
+		}
+		out := Page{NextCursor: page.Next, Mentions: []model.Mention{}}
+		for _, d := range page.Mentions {
+			if !since.IsZero() && !d.CreatedAt.IsZero() && d.CreatedAt.Before(since) {
+				continue
+			}
+			m := model.Mention{Source: "reddit", Query: query, Author: model.Str(d.Author), Title: model.Str(d.Title), Text: d.Body, URL: model.Str(d.URL), CreatedAt: d.CreatedAt, Score: d.Score}
+			m.Normalize()
+			out.Mentions = append(out.Mentions, m)
+		}
+		return out, nil
+	}
 	if s.AccessToken == "" {
 		token, err := s.appToken(ctx)
 		if err != nil {

@@ -303,7 +303,7 @@ function ProjectDetail({
       {connect && (
         <Modal title={`Connect ${connect.label} to ${project.name}`} onClose={() => setConnect(null)}>
           {connect.name === "reddit" ? (
-            <RedditForm projectId={project.id} />
+            <RedditForm projectId={project.id} onDone={()=>{setConnect(null);onChanged();}} />
           ) : (
             <ConnectForm
               platform={connect}

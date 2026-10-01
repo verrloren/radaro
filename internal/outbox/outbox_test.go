@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/verrloren/radaro/internal/publish"
+	"github.com/verrloren/radaro/internal/redditbrowser"
 	"github.com/verrloren/radaro/internal/store"
 )
 
@@ -20,6 +21,23 @@ type fakePub struct {
 	publishFn func(publish.Post) (publish.Result, error)
 	metricsFn func(string) (publish.Metrics, error)
 	checkFn   func() (publish.Health, error)
+}
+
+func TestUncertainBrowserPublishStaysClaimed(t *testing.T) {
+	h := newHarness(t)
+	h.account("reddit", "alice")
+	h.pub("alice").publishFn = func(publish.Post) (publish.Result, error) { return publish.Result{}, &redditbrowser.UncertainError{} }
+	d := h.approved(store.NewDraft{Platform: "reddit", Community: "golang", Title: "Hello", Body: "A useful post"})
+	got, _, err := h.s.Publish(context.Background(), h.uid, d.ID)
+	if err == nil || got.Status != "publishing" {
+		t.Fatal("uncertain submission became retryable")
+	}
+	if _, _, err = h.s.Publish(context.Background(), h.uid, d.ID); err == nil {
+		t.Fatal("uncertain submission was sent twice")
+	}
+	if len(h.pub("alice").posts) != 1 {
+		t.Fatal("connector was called twice")
+	}
 }
 
 func (f *fakePub) Publish(_ context.Context, p publish.Post) (publish.Result, error) {

@@ -4,7 +4,7 @@
 
 ![Radaro dashboard](docs/dashboard.png)
 
-- **One binary.** Go, pure-Go SQLite, dashboard embedded. No Python, Node or runtime to install.
+- **One binary.** Go, pure-Go SQLite, dashboard embedded. No Python or Node runtime. Reddit browser connections optionally use Chromium installed on the server (included in the Docker image).
 - **Zero-config first run.** `radaro demo` works offline. Hacker News, Bluesky and Stack Overflow need no keys.
 - **Incremental + backfill scanning.** Durable per-source cursors catch up new mentions and walk back through history without re-fetching.
 - **Local analysis.** Sentiment (lexicon with negation, intensifiers and contrast) and theme clustering run without any model. An LLM (Anthropic, OpenAI-compatible or local Ollama) is optional.
@@ -136,20 +136,24 @@ Delivery state lives in SQLite, so nothing is sent twice and failures are retrie
 
 ## Publishing
 
-Radaro talks to each platform's API directly. You connect your own accounts; credentials stay in the server's database (readable only by the server's user) and are never sent back to the browser or the CLI.
+Radaro uses public platform APIs and also supports Reddit through isolated Chromium sessions. You connect your own accounts; credentials stay in the server's database (readable only by the server's user) and are never sent back to the browser or the CLI.
 
-The easiest way is the dashboard: **Setup** → **Connect account** next to the platform, or **Connect new** in a project's Accounts block to bind it to that project at once. Each project publishes with its own pool of accounts per platform, and a project's Reddit or Mastodon account is also used to scan that platform. Keys are checked with the platform before they are saved. For Reddit, create a "web app" at [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps) with the redirect URI the form shows (`<your server>/oauth/reddit/callback`, e.g. `http://127.0.0.1:8042/oauth/reddit/callback`), then approve access on Reddit. Once one Reddit account is connected, **Add another Reddit account** reuses its app credentials; sign in to the other Reddit account in a private browser window first. The CLI commands below do the same from a terminal.
+The easiest way is the dashboard: **Setup** → **Connect account** next to the platform, or **Connect new** in a project's Accounts block. Each project publishes with its own pool of accounts, and its Reddit or Mastodon account also scans that platform.
+
+For Reddit, choose **Login and password**, enter the username or email and password, and optionally set an HTTP, HTTPS or SOCKS5 proxy (`scheme://user:password@host:port`). CAPTCHA and verification codes are completed in the interactive Reddit window inside Radaro. Click **Complete connection** after Reddit confirms the login. Each account has its own browser session and proxy for login, scans, health checks and approved publishing. The password is discarded after authentication; session cookies stay in the server database. To change a connected account's proxy, use its **Proxy** button. An empty proxy means a direct connection; a failing proxy never falls back to direct access.
+
+The **OAuth app** tab and the CLI support the existing API connection: create a web app at [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps) with the redirect URI shown by Radaro, then approve access on Reddit. Additional OAuth accounts reuse that app's credentials.
 
 | Platform | Connect | Posts | Replies | Metrics |
 |---|---|---|---|---|
 | Bluesky | `radaro connect bluesky --handle you.bsky.social` + an [app password](https://bsky.app/settings/app-passwords) | ✓ (links and hashtags are clickable) | ✓ | likes, reposts, replies, quotes |
 | Mastodon | `radaro connect mastodon --instance mastodon.social` + an access token (Preferences → Development, scopes `read write:statuses`) | ✓ | ✓ (remote threads are resolved) | favourites, reblogs, replies |
-| Reddit | create an app at [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps) with redirect `<your server>/oauth/reddit/callback`, then `radaro connect reddit --client-id <id>` and approve in the browser | ✓ self posts | ✓ posts and comments | score, comments, upvote ratio |
+| Reddit | dashboard **Login and password** (optional account proxy), or OAuth via `radaro connect reddit --client-id <id>` | ✓ self posts | ✓ posts and comments | score, comments (OAuth also provides upvote ratio) |
 | Dev.to | `radaro connect devto` + an API key (Settings → Extensions) | ✓ articles (`--community` = tags) | — | views, reactions, comments |
 
 Secrets are read from a hidden prompt, or from stdin when piped (`echo "$TOKEN" | radaro connect devto`).
 
-For several Bluesky, Mastodon or Dev.to accounts, use **Import** in Setup or `radaro connect import accounts.csv`. CSV accepts an optional `platform,handle,secret,instance` header; JSON accepts an array of objects with those fields. At most 500 rows are accepted, with each credential checked before it is saved. The result says which rows were added, updated or rejected without returning their secrets. Reddit uses browser approval, so it is added separately. An admin may set one outbound HTTP, HTTPS or SOCKS5 proxy in Setup when the server needs it to reach platforms; it applies to scans and publishing without a restart. Without a saved proxy, Go uses `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` from the server environment.
+For several Bluesky, Mastodon or Dev.to accounts, use **Import** in Setup or `radaro connect import accounts.csv`. CSV accepts an optional `platform,handle,secret,instance` header; JSON accepts an array of objects with those fields. At most 500 rows are accepted, with each credential checked before it is saved. The result says which rows were added, updated or rejected without returning their secrets. Reddit accounts are connected individually through the interactive login or OAuth form. An admin may set one outbound HTTP, HTTPS or SOCKS5 proxy in Setup when the server needs it to reach platforms; it applies to scans and publishing without a restart. Without a saved proxy, Go uses `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` from the server environment.
 
 ```bash
 radaro project create "Launch"                 # → id 2
@@ -184,7 +188,7 @@ A refused publish sends nothing and says when the draft may go out; `radaro publ
 
 ## Running it on a server
 
-Radaro stays one binary with one SQLite file; nothing else is needed on the server.
+Radaro runs as one Go binary with one SQLite file. Reddit browser connections additionally require Chromium. Set `RADARO_BROWSER_PATH` if it is outside PATH; the Docker image includes it. Browser profiles are temporary and separate for every connection.
 
 1. Run `radaro serve` as its own user with `RADARO_DB` on persistent storage (or `docker compose up -d`, which keeps it in a volume). It binds to `127.0.0.1:8042`.
 2. Put a TLS reverse proxy in front of it; passwords and session cookies must not travel over plain HTTP. With [Caddy](https://caddyserver.com): `radaro.example.com { reverse_proxy 127.0.0.1:8042 }`. Radaro reads `X-Forwarded-Proto` and `X-Forwarded-For` from a proxy on the same machine or a private network (Docker), so cookies are `Secure` and rate limits apply per client.

@@ -3,6 +3,7 @@ import { api, errorMessage } from "../api";
 import { useAsync } from "../hooks";
 import type { Platform, SourceSettings } from "../types";
 import { ErrorLine } from "./Status";
+import { RedditBrowserForm } from "./RedditBrowserForm";
 
 interface FieldSpec {
   key: "handle" | "instance" | "secret";
@@ -170,7 +171,11 @@ export function ConnectForm({ platform, projectId, onDone }: { platform: Platfor
 }
 
 /** Starts the Reddit OAuth sign-in; Reddit sends the browser back to Setup. */
-export function RedditForm({ projectId }: { projectId?: number }) {
+export function RedditForm({projectId,onDone}:{projectId?:number;onDone?:()=>void}) {
+  const [mode,setMode]=useState<"browser"|"oauth">("browser");
+  return <div><div className="btn-row"><button type="button" className={`btn sm ${mode==="browser"?"primary":"ghost"}`} onClick={()=>setMode("browser")}>Login and password</button><button type="button" className={`btn sm ${mode==="oauth"?"primary":"ghost"}`} onClick={()=>setMode("oauth")}>OAuth app</button></div>{mode==="browser"?<RedditBrowserForm projectId={projectId} onDone={onDone}/>:<RedditOAuthForm projectId={projectId}/>}</div>;
+}
+function RedditOAuthForm({ projectId }: { projectId?: number }) {
   const id = useId();
   const redirect = `${window.location.origin}/oauth/reddit/callback`;
   const app = useAsync((signal) => api.redditApp(signal), []);

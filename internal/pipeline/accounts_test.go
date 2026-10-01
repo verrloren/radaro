@@ -8,8 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/network"
 	"github.com/verrloren/radaro/internal/config"
 	"github.com/verrloren/radaro/internal/publish"
+	"github.com/verrloren/radaro/internal/redditbrowser"
 	"github.com/verrloren/radaro/internal/store"
 )
 
@@ -143,5 +145,35 @@ func TestSourceOptionsStoreFailure(t *testing.T) {
 	st.Close()
 	if _, err := SourceOptions(&config.Config{}, st, 0, 0); err == nil {
 		t.Fatal("a closed store is an error")
+	}
+}
+
+func TestBrowserAccountPoolKeepsItsOwnProxyAndCookies(t *testing.T) {
+	st := openStore(t)
+	u, _ := st.CreateUser("browser@example.com", "h", true)
+	p, _ := st.CreateProject(u.ID, "Browser")
+	oauth := redditAccount(t, st, u.ID, "oauth")
+	browser, err := st.SaveAccount(u.ID, platReddit, "browser", publish.RedditCredentials{Browser: &redditbrowser.Credentials{
+		Username: "browser", Proxy: "socks5://proxy.example:1080", Cookies: []*network.CookieParam{{Name: "reddit_session", Value: "browser-cookie", Domain: ".reddit.com"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.BindAccount(u.ID, p.ID, browser.ID); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{}
+	cfg.SourceOptions.RedditAccessToken = "environment-token"
+	o, err := SourceOptions(cfg, st, u.ID, p.ID)
+	if err != nil || o.RedditBrowser == nil {
+		t.Fatalf("pooled browser account not selected: %v", err)
+	}
+	if o.RedditBrowser.Proxy != "socks5://proxy.example:1080" || o.RedditBrowser.Cookies[0].Value != "browser-cookie" || o.RedditAccessToken != "" || o.RedditClientID != "" || o.RedditRefreshToken != "" {
+		t.Fatal("account proxy, cookies or authentication mode mixed with another account")
+	}
+	pause(t, st, browser)
+	o, err = SourceOptions(cfg, st, u.ID, p.ID)
+	if err != nil || o.RedditBrowser != nil || o.RedditRefreshToken != "rt-"+oauth.Handle {
+		t.Fatal("fallback account retained the browser authentication mode")
 	}
 }

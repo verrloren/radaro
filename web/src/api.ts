@@ -1,5 +1,8 @@
 import type {
   Account,
+  BrowserScreen,
+  BrowserInput,
+  RedditBrowserRequest,
   AccountImportResult,
   AccountsResponse,
   AccountStats,
@@ -228,6 +231,13 @@ export const api = {
     }),
 
   redditApp: (signal?: AbortSignal) => request<{ configured: boolean }>("GET", "/api/accounts/reddit/app", { signal }),
+
+  redditBrowser: (signal?: AbortSignal) => request<{available:boolean}>("GET","/api/accounts/reddit/browser",{signal}),
+  startRedditBrowser: (body:RedditBrowserRequest,signal?:AbortSignal)=>request<{session_id:string;screen:BrowserScreen;expires_at:string}>("POST","/api/accounts/reddit/browser",{body,signal}),
+  redditBrowserInput: (session:string,body:BrowserInput)=>request<BrowserScreen>("POST",`/api/accounts/reddit/browser/${encodeURIComponent(session)}/input`,{body}),
+  finishRedditBrowser: (session:string)=>request<Account>("POST",`/api/accounts/reddit/browser/${encodeURIComponent(session)}/finish`,{body:{}}),
+  cancelRedditBrowser: (session:string)=>request<{cancelled:boolean}>("DELETE",`/api/accounts/reddit/browser/${encodeURIComponent(session)}`),
+  redditBrowserProxy: (id:number,proxy_url:string)=>request<{configured:boolean}>("PUT",`/api/accounts/${id}/browser/proxy`,{body:{proxy_url}}),
 
   proxySettings: (signal?: AbortSignal) => request<ProxySettings>("GET", "/api/settings/proxy", { signal }),
 

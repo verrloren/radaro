@@ -139,9 +139,21 @@ func scannable(a *store.Account) bool {
 
 func useRedditAccount(o *sources.Options, a *store.Account) bool {
 	var c publish.RedditCredentials
-	if json.Unmarshal(a.Credentials, &c) != nil || c.ClientID == "" || c.RefreshToken == "" {
+	if json.Unmarshal(a.Credentials, &c) != nil {
 		return false
 	}
+	if c.Browser != nil && c.Browser.Username != "" && len(c.Browser.Cookies) > 0 {
+		o.RedditBrowser = c.Browser
+		o.RedditClientID = ""
+		o.RedditClientSecret = ""
+		o.RedditAccessToken = ""
+		o.RedditRefreshToken = ""
+		return true
+	}
+	if c.ClientID == "" || c.RefreshToken == "" {
+		return false
+	}
+	o.RedditBrowser = nil
 	o.RedditClientID, o.RedditClientSecret, o.RedditRefreshToken, o.RedditAccessToken = c.ClientID, c.ClientSecret, c.RefreshToken, ""
 	return true
 }

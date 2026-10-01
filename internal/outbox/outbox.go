@@ -498,6 +498,11 @@ func (s *Service) claim(userID int64, d *store.Draft) (*store.Account, publish.P
 // returns it to the queue; anything else fails it, and an account error also
 // marks the account.
 func (s *Service) publishFailed(ctx context.Context, claimed *store.Draft, acc *store.Account, pubErr error) (*store.Draft, *store.Account, error) {
+	var uncertain interface{ PublishUncertain() bool }
+	if errors.As(pubErr, &uncertain) && uncertain.PublishUncertain() {
+		_ = s.Store.LogActivity(claimed.UserID, "draft.publish_uncertain", claimed.ID, pubErr.Error())
+		return claimed, acc, pubErr
+	}
 	status, retry := publish.Classify(pubErr)
 	if status == publish.HealthLimited {
 		return s.requeue(ctx, claimed, acc, pubErr, retry)

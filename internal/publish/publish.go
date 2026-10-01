@@ -1,8 +1,8 @@
 // Package publish holds Radaro's own platform connectors: publish a post or a
 // reply to a connected account and read back its engagement metrics.
 //
-// Every connector talks to the platform's public API directly, so publishing
-// needs nothing but the radaro binary and the user's own credentials.
+// Connectors use public APIs, or an isolated Chromium session for Reddit
+// accounts connected with a login and password.
 package publish
 
 import (
