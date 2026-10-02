@@ -3439,6 +3439,7 @@ a.auth-back:hover {
 .reply-composer { border-top: 1px solid var(--line); padding-top: 20px; }
 .reply-settings .setup-form { margin-top: 16px; }
 .reddit-reply-dialog > .reply-settings { margin-bottom: 24px; }
+.reply-settings textarea { font-family: inherit; line-height: 1.5; }
 .llm-status-card { margin-bottom: 24px; }
 .llm-connected { color: var(--pos); }
 .llm-error { color: var(--neg); }

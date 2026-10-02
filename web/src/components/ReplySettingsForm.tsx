@@ -55,8 +55,8 @@ function Fields({ projectId, initial, expanded, disabled, onReady, onDirty }: Re
         <label htmlFor={`${id}-instructions`}>Comment instructions</label>
         <textarea id={`${id}-instructions`} rows={4} maxLength={8000} value={value.instructions ?? ""} disabled={busy || disabled} onChange={(e) => field("instructions", e.target.value)} placeholder="What the comment should be based on, which points to address, examples to use, what to avoid, and whether to include a link or ask a question." />
       </div>
-      <div className="field"><label htmlFor={`${id}-language`}>Reply language</label><input id={`${id}-language`} maxLength={100} value={value.language} disabled={busy || disabled} onChange={(e) => field("language", e.target.value)} /></div>
-      <div className="field"><label htmlFor={`${id}-tone`}>Tone</label><input id={`${id}-tone`} maxLength={500} value={value.tone} disabled={busy || disabled} onChange={(e) => field("tone", e.target.value)} /></div>
+      <div className="field"><label htmlFor={`${id}-language`}>Reply language</label><input type="text" id={`${id}-language`} maxLength={100} value={value.language} disabled={busy || disabled} onChange={(e) => field("language", e.target.value)} /></div>
+      <div className="field"><label htmlFor={`${id}-tone`}>Tone</label><input type="text" id={`${id}-tone`} maxLength={500} value={value.tone} disabled={busy || disabled} onChange={(e) => field("tone", e.target.value)} /></div>
       <ErrorLine error={error} />
       <div className="btn-row"><button type="button" className="btn ghost sm" disabled={busy || disabled} onClick={() => void save()}>{busy ? "Saving…" : "Save reply context"}</button>{saved && <span role="status">Saved</span>}</div>
     </div>
