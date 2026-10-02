@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/url"
 	"os"
@@ -200,14 +201,14 @@ func (s *Session) run(ctx context.Context, actions ...chromedp.Action) error {
 	stop := context.AfterFunc(ctx, cancel)
 	defer stop()
 	if err := chromedp.Run(c, actions...); err != nil {
-		return errors.New("Reddit browser operation failed; check the connection or reconnect the account")
+		return browserOperationError(ctx, s.ctx, err)
 	}
 	return nil
 }
 
 func (s *Session) Navigate(ctx context.Context, target string) error {
 	if err := s.run(ctx, chromedp.Navigate(target)); err != nil {
-		return err
+		return fmt.Errorf("loading Reddit page: %w", err)
 	}
 	return s.checkBlock(ctx)
 }
