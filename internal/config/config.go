@@ -107,6 +107,7 @@ func Load() (*Config, error) {
 			OllamaHost:      e.str("RADARO_LLM_HOST"),
 			CodexHome:       e.str("RADARO_CODEX_HOME"),
 			CodexPath:       e.str("RADARO_CODEX_PATH"),
+			ReasoningEffort: e.choice("RADARO_LLM_REASONING_EFFORT", "medium", "low", "medium", "high", "xhigh", "max", "ultra"),
 		},
 		SourceOptions: sources.Options{
 			RedditClientID:      e.str("RADARO_REDDIT_CLIENT_ID"),

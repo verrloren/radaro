@@ -11,12 +11,13 @@ import (
 )
 
 type llmStatus struct {
-	Provider   string  `json:"provider"`
-	Model      string  `json:"model"`
-	Configured bool    `json:"configured"`
-	Status     string  `json:"status"`
-	CheckedAt  *string `json:"checked_at"`
-	Detail     string  `json:"detail"`
+	Provider        string  `json:"provider"`
+	Model           string  `json:"model"`
+	ReasoningEffort string  `json:"reasoning_effort,omitempty"`
+	Configured      bool    `json:"configured"`
+	Status          string  `json:"status"`
+	CheckedAt       *string `json:"checked_at"`
+	Detail          string  `json:"detail"`
 }
 
 type llmConnection struct {
@@ -44,6 +45,7 @@ func (s *Server) llmView() llmStatus {
 		v.Model = p.Model
 	case *llm.Codex:
 		v.Model = p.Model
+		v.ReasoningEffort = p.ReasoningEffort
 	}
 	if !v.Configured {
 		return v

@@ -25,12 +25,15 @@ func (p *fakeProvider) Complete(_ context.Context, prompt, system string, _ int)
 func TestRedditDraftContextAndValidation(t *testing.T) {
 	p := &fakeProvider{body: " Useful reply "}
 	post := redditbrowser.PostDetails{Body: strings.Repeat("界", 30000), CanReply: true, Replies: []redditbrowser.Comment{{Body: "Existing answer"}}, Rules: []redditbrowser.Rule{{Description: "No spam"}}}
-	body, err := Reddit(context.Background(), p, store.ReplySettings{Brief: "Verified facts"}, post)
+	body, err := Reddit(context.Background(), p, store.ReplySettings{Brief: "Verified facts", Instructions: "Use my comparison and ask a question"}, post)
 	if err != nil || body != "Useful reply" || !strings.Contains(p.prompt, "Verified facts") || !strings.Contains(p.prompt, "Existing answer") || !strings.Contains(p.prompt, "No spam") || !strings.Contains(p.system, "untrusted") {
 		t.Fatalf("draft %q %v", body, err)
 	}
 	if strings.Count(p.prompt, "界") != 12000 || len([]rune(post.Body)) != 30000 {
 		t.Fatal("unbounded context or caller mutated")
+	}
+	if !strings.Contains(p.prompt, "Use my comparison and ask a question") || !strings.Contains(p.system, "project.instructions") {
+		t.Fatal("user comment instructions were not passed to the model")
 	}
 	for _, bad := range []string{"", strings.Repeat("x", 10001)} {
 		p.body = bad

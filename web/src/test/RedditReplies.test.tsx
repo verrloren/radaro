@@ -31,6 +31,7 @@ describe("Reddit reply preparation",()=>{
     expect(prepare).toHaveBeenCalledWith("abc",3,{body:"Manual answer"});expect(onDraft).toHaveBeenCalledWith(d);
   });
   it("automatically prepares one draft after Reply, then opens the saved draft",async()=>{
+    vi.spyOn(replyApi,"settings").mockResolvedValue({brief:"Verified product description",instructions:"Explain the relevant benefit",language:"English",tone:"Helpful"});
     vi.spyOn(llmApi,"status").mockResolvedValue({...status,provider:"openai",configured:true,status:"unchecked"});
     const d=draft({kind:"reply",body:"Generated answer"});const prepare=vi.spyOn(replyApi,"prepare").mockResolvedValue(d);const onDraft=vi.fn();
     render(<RedditReplyDialog mention={mention} compose onClose={vi.fn()} onDraft={onDraft} />);
@@ -49,6 +50,7 @@ describe("Reddit reply preparation",()=>{
     expect(prepare).not.toHaveBeenCalled();
   });
   it("keeps manual text after a preparation failure",async()=>{
+    vi.spyOn(replyApi,"settings").mockResolvedValue({brief:"Verified product description",language:"English",tone:"Helpful"});
     vi.spyOn(llmApi,"status").mockResolvedValue({...status,configured:true,status:"connected"});
     vi.spyOn(replyApi,"prepare").mockRejectedValue(new ApiError(502,"Provider unavailable"));
     render(<RedditReplyDialog mention={mention} compose onClose={vi.fn()} onDraft={vi.fn()} />);
@@ -57,6 +59,48 @@ describe("Reddit reply preparation",()=>{
     await userEvent.click(screen.getByRole("button",{name:"Prepare with LLM"}));
     await waitFor(()=>expect((screen.getByLabelText("Comment") as HTMLTextAreaElement).disabled).toBe(false));
     expect((screen.getByLabelText("Comment") as HTMLTextAreaElement).value).toBe("My answer");
+  });
+  it("waits for saved promotion context before automatic generation",async()=>{
+    vi.spyOn(llmApi,"status").mockResolvedValue({...status,configured:true,status:"connected"});
+    const prepare=vi.spyOn(replyApi,"prepare").mockResolvedValue(draft({body:"Product-aware reply"}));
+    vi.spyOn(replyApi,"saveSettings").mockImplementation(async(_pid, value)=>value);
+    render(<RedditReplyDialog mention={mention} compose onClose={vi.fn()} onDraft={vi.fn()} />);
+    const brief=await screen.findByLabelText("What to promote");
+    expect(prepare).not.toHaveBeenCalled();
+    await userEvent.type(brief,"My product: verified benefits and a link");
+    await userEvent.type(screen.getByLabelText("Comment instructions"),"Focus on the author's stated problem");
+    expect((screen.getByRole("button",{name:"Prepare with LLM"}) as HTMLButtonElement).disabled).toBe(true);
+    expect(prepare).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button",{name:"Save reply context"}));
+    await waitFor(()=>expect((screen.getByLabelText("Comment") as HTMLTextAreaElement).value).toBe("Product-aware reply"));
+    expect(replyApi.saveSettings).toHaveBeenCalledWith(3,expect.objectContaining({brief:"My product: verified benefits and a link",instructions:"Focus on the author's stated problem"}));
+    expect(prepare).toHaveBeenCalledTimes(1);
+  });
+  it("regenerates an existing draft only after an explicit click",async()=>{
+    const d=draft({kind:"reply",body:"Old draft"});
+    vi.spyOn(replyApi,"post").mockResolvedValue({post,project_id:3,draft:d});
+    vi.spyOn(llmApi,"status").mockResolvedValue({...status,configured:true,status:"connected"});
+    const prepare=vi.spyOn(replyApi,"prepare").mockResolvedValue({...d,body:"New draft"});
+    render(<RedditReplyDialog mention={mention} compose onClose={vi.fn()} onDraft={vi.fn()} />);
+    const btn=await screen.findByRole("button",{name:"Regenerate draft"});
+    await waitFor(()=>expect((btn as HTMLButtonElement).disabled).toBe(false));
+    expect(prepare).not.toHaveBeenCalled();
+    await userEvent.click(btn);
+    await waitFor(()=>expect((screen.getByLabelText("Comment") as HTMLTextAreaElement).value).toBe("New draft"));
+    expect(prepare.mock.calls[0][2]).toEqual({generate:true,regenerate:true,draft_id:d.id});
+  });
+  it("preserves manually typed text when project context is saved",async()=>{
+    vi.spyOn(llmApi,"status").mockResolvedValue({...status,configured:true,status:"connected"});
+    const prepare=vi.spyOn(replyApi,"prepare");
+    vi.spyOn(replyApi,"saveSettings").mockImplementation(async(_pid,value)=>value);
+    render(<RedditReplyDialog mention={mention} compose onClose={vi.fn()} onDraft={vi.fn()} />);
+    await screen.findByLabelText("What to promote");
+    await userEvent.type(screen.getByLabelText("Comment"),"My manually written reply");
+    await userEvent.type(screen.getByLabelText("What to promote"),"Verified product facts");
+    await userEvent.click(screen.getByRole("button",{name:"Save reply context"}));
+    await screen.findByText("Saved");
+    expect((screen.getByLabelText("Comment") as HTMLTextAreaElement).value).toBe("My manually written reply");
+    expect(prepare).not.toHaveBeenCalled();
   });
 });
 

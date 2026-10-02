@@ -31,6 +31,7 @@ type Settings struct {
 	OllamaHost      string
 	CodexHome       string
 	CodexPath       string
+	ReasoningEffort string
 }
 
 // New returns the configured provider.

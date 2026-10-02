@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -79,8 +80,14 @@ func TestReplyPreparationAndProjectOwnership(t *testing.T) {
 	if r := do(h, "GET", path+"/reddit", ""); r.Code != 200 || !strings.Contains(r.Body.String(), `"comments":47`) {
 		t.Fatalf("details %d %s", r.Code, r.Body)
 	}
-	if r := do(h, "PUT", "/api/projects/1/reply-settings", `{"brief":"Verified project description","language":"English","tone":"concise"}`); r.Code != 200 {
+	if r := do(h, "PUT", "/api/projects/1/reply-settings", `{"brief":"Verified project description","instructions":"Base the reply on the supplied comparison","language":"English","tone":"concise"}`); r.Code != 200 {
 		t.Fatal(r.Body)
+	}
+	if r := do(h, "GET", "/api/projects/1/reply-settings", ""); r.Code != 200 || !strings.Contains(r.Body.String(), "Base the reply on the supplied comparison") {
+		t.Fatal("instructions were not saved")
+	}
+	if r := do(h, "PUT", "/api/projects/1/reply-settings", `{"instructions":"`+strings.Repeat("x", 8001)+`"}`); r.Code != 422 {
+		t.Fatal("oversized instructions accepted")
 	}
 	if r := do(other, "GET", "/api/projects/1/reply-settings", ""); r.Code != 404 {
 		t.Fatalf("foreign settings %d", r.Code)
@@ -91,7 +98,7 @@ func TestReplyPreparationAndProjectOwnership(t *testing.T) {
 	if r.Code != 201 || d.Status != "draft" || d.Kind != "reply" || d.ProjectID == nil || *d.ProjectID != 1 || d.MentionID == nil || *d.MentionID != id {
 		t.Fatalf("prepared %d %s", r.Code, r.Body)
 	}
-	if !strings.Contains(provider.prompt, "Verified project description") || !strings.Contains(provider.prompt, "Existing answer") || !strings.Contains(provider.prompt, "Be helpful") {
+	if !strings.Contains(provider.prompt, "Verified project description") || !strings.Contains(provider.prompt, "Base the reply on the supplied comparison") || !strings.Contains(provider.prompt, "Existing answer") || !strings.Contains(provider.prompt, "Be helpful") {
 		t.Fatal("missing reply context")
 	}
 	if strings.Contains(r.Body.String(), "private-cookie") || strings.Contains(r.Body.String(), "private-proxy") {
@@ -189,5 +196,101 @@ func TestConcurrentReplyClicksDoNotCreateDuplicates(t *testing.T) {
 	}
 	if ds, _ := st.Drafts(1, "", 0); len(ds) != 1 {
 		t.Fatalf("duplicates %d", len(ds))
+	}
+}
+
+func TestRegenerateReplyUsesNewContextAndResetsApproval(t *testing.T) {
+	s, st, h, id := replyServer(t)
+	p := &replyLLM{}
+	s.newLLM = func() (llm.Provider, error) { return p, nil }
+	path := "/api/mentions/" + id + "/reply"
+	r := do(h, "POST", path, `{"body":"Old manually edited text"}`)
+	var old store.Draft
+	json.Unmarshal(r.Body.Bytes(), &old)
+	if r.Code != 201 {
+		t.Fatal(r.Body)
+	}
+	if _, err := st.ApproveDraft(1, old.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveReplySettings(1, 1, store.ReplySettings{Brief: "Our actual product", Instructions: "Discuss the provided use case"}); err != nil {
+		t.Fatal(err)
+	}
+	r = do(h, "POST", path, `{"generate":true,"regenerate":true,"draft_id":`+strconv.FormatInt(old.ID, 10)+`}`)
+	var got store.Draft
+	json.Unmarshal(r.Body.Bytes(), &got)
+	if r.Code != 200 || got.ID != old.ID || got.Status != store.DraftPending || got.ApprovedAt != nil || got.Body != "A helpful reply" || *got.ReplyTo != *old.ReplyTo {
+		t.Fatalf("regeneration %d %s", r.Code, r.Body)
+	}
+	if !strings.Contains(p.prompt, "Our actual product") || !strings.Contains(p.prompt, "Discuss the provided use case") {
+		t.Fatal("old context used")
+	}
+	p.fail = true
+	r = do(h, "POST", path, `{"generate":true,"regenerate":true,"draft_id":`+strconv.FormatInt(old.ID, 10)+`}`)
+	after, _ := st.Draft(1, old.ID)
+	if r.Code != 502 || after.Body != got.Body || after.UpdatedAt != got.UpdatedAt {
+		t.Fatal("failure changed draft")
+	}
+	if ds, _ := st.Drafts(1, "", 0); len(ds) != 1 {
+		t.Fatal("regeneration created duplicate")
+	}
+	if _, err := st.ApproveDraft(1, old.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.BeginPublish(1, old.ID); err != nil {
+		t.Fatal(err)
+	}
+	calls := p.calls
+	r = do(h, "POST", path, `{"generate":true,"regenerate":true,"draft_id":`+strconv.FormatInt(old.ID, 10)+`}`)
+	if r.Code != 409 || p.calls != calls {
+		t.Fatal("regenerated publishing draft")
+	}
+}
+
+func TestRegenerationDoesNotOverwriteConcurrentEditsOrPublishClaims(t *testing.T) {
+	for _, publishing := range []bool{false, true} {
+		t.Run(strconv.FormatBool(publishing), func(t *testing.T) {
+			s, st, h, id := replyServer(t)
+			r := do(h, "POST", "/api/mentions/"+id+"/reply", `{"body":"Original draft"}`)
+			var d store.Draft
+			json.Unmarshal(r.Body.Bytes(), &d)
+			if r.Code != 201 {
+				t.Fatal(r.Body)
+			}
+			if publishing {
+				if _, err := st.ApproveDraft(1, d.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			p := &blockingReplyLLM{started: make(chan struct{}), release: make(chan struct{})}
+			s.newLLM = func() (llm.Provider, error) { return p, nil }
+			done := make(chan int, 1)
+			go func() {
+				done <- do(h, "POST", "/api/mentions/"+id+"/reply", `{"generate":true,"regenerate":true,"draft_id":`+strconv.FormatInt(d.ID, 10)+`}`).Code
+			}()
+			<-p.started
+			if publishing {
+				if _, err := st.BeginPublish(1, d.ID); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				body := "Human edited during generation"
+				if _, err := st.EditDraft(1, d.ID, store.DraftEdit{Body: &body}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			close(p.release)
+			if code := <-done; code != 409 {
+				t.Fatalf("concurrent change status %d", code)
+			}
+			got, _ := st.Draft(1, d.ID)
+			if publishing {
+				if got.Status != store.DraftPublishing || got.Body != "Original draft" {
+					t.Fatal("publish claim changed")
+				}
+			} else if got.Body != "Human edited during generation" {
+				t.Fatal("human edit overwritten")
+			}
+		})
 	}
 }

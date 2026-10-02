@@ -342,9 +342,10 @@ func (s *Store) Drafts(userID int64, status string, limit int) ([]*Draft, error)
 
 // DraftEdit changes a draft's text. Nil fields are left alone.
 type DraftEdit struct {
-	Title     *string
-	Body      *string
-	Community *string
+	Title             *string
+	Body              *string
+	Community         *string
+	ExpectedUpdatedAt *string
 }
 
 // EditDraft updates text and sends an approved or failed draft back to review.
@@ -355,6 +356,9 @@ func (s *Store) EditDraft(userID, id int64, e DraftEdit) (*Draft, error) {
 	}
 	if d.Status == DraftPublished || d.Status == DraftPublishing {
 		return nil, fmt.Errorf("%w: draft %d is already %s", ErrConflict, id, d.Status)
+	}
+	if e.ExpectedUpdatedAt != nil && d.UpdatedAt != *e.ExpectedUpdatedAt {
+		return nil, fmt.Errorf("%w: draft %d changed while preparing text", ErrConflict, id)
 	}
 	if e.Body != nil && strings.TrimSpace(*e.Body) == "" {
 		return nil, errors.New("draft body must not be empty")
@@ -370,8 +374,12 @@ func (s *Store) EditDraft(userID, id int64, e DraftEdit) (*Draft, error) {
 	if e.Community != nil {
 		sets, args = append(sets, "community = ?"), append(args, nullIfEmpty(*e.Community))
 	}
-	if _, err := s.db.Exec(`UPDATE drafts SET `+strings.Join(sets, ", ")+` WHERE id = ?`, append(args, id)...); err != nil {
+	res, err := s.db.Exec(`UPDATE drafts SET `+strings.Join(sets, ", ")+` WHERE id = ? AND status = ? AND updated_at = ?`, append(args, id, d.Status, d.UpdatedAt)...)
+	if err != nil {
 		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, fmt.Errorf("%w: draft %d changed concurrently", ErrConflict, id)
 	}
 	return s.Draft(userID, id)
 }

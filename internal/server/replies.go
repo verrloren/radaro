@@ -115,15 +115,25 @@ func (s *Server) prepareReply(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
-	if d != nil {
+	var body struct {
+		Body       string `json:"body"`
+		Generate   bool   `json:"generate"`
+		Regenerate bool   `json:"regenerate"`
+		DraftID    int64  `json:"draft_id"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	if body.Regenerate && (!body.Generate || d == nil || body.DraftID != d.ID) {
+		writeError(w, 409, "the reply draft has changed; reload before regenerating")
+		return
+	}
+	if d != nil && !body.Regenerate {
 		writeJSON(w, 200, s.detail(uid, d))
 		return
 	}
-	var body struct {
-		Body     string `json:"body"`
-		Generate bool   `json:"generate"`
-	}
-	if !decode(w, r, &body) {
+	if d != nil && (d.Status == store.DraftPublished || d.Status == store.DraftPublishing) {
+		writeError(w, 409, "published or publishing replies cannot be regenerated")
 		return
 	}
 	if body.Generate {
@@ -134,7 +144,11 @@ func (s *Server) prepareReply(w http.ResponseWriter, r *http.Request) {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 		defer cancel()
-		post, err := s.readPost(ctx, uid, pid, *m.URL)
+		target := *m.URL
+		if d != nil && d.ReplyTo != nil {
+			target = *d.ReplyTo
+		}
+		post, err := s.readPost(ctx, uid, pid, target)
 		if err != nil {
 			writeError(w, 502, err.Error())
 			return
@@ -160,6 +174,16 @@ func (s *Server) prepareReply(w http.ResponseWriter, r *http.Request) {
 	preview := store.Draft{Platform: n.Platform, Kind: n.Kind, Body: n.Body, ReplyTo: &n.ReplyTo}
 	if err := ValidateDraft(&preview); err != nil {
 		writeError(w, 422, err.Error())
+		return
+	}
+	if d != nil {
+		d, err = s.store.EditDraft(uid, d.ID, store.DraftEdit{Body: &body.Body, ExpectedUpdatedAt: &d.UpdatedAt})
+		if err != nil {
+			storeError(w, err, 422)
+			return
+		}
+		_ = s.store.LogActivity(uid, "draft.edited", d.ID, DraftSummary(d))
+		writeJSON(w, 200, s.detail(uid, d))
 		return
 	}
 	d, err = s.store.CreateDraft(n)
@@ -197,9 +221,10 @@ func (s *Server) saveReplySettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	settings.Brief = strings.TrimSpace(settings.Brief)
+	settings.Instructions = strings.TrimSpace(settings.Instructions)
 	settings.Language = strings.TrimSpace(settings.Language)
 	settings.Tone = strings.TrimSpace(settings.Tone)
-	if len(settings.Brief) > 8000 || len(settings.Language) > 100 || len(settings.Tone) > 500 {
+	if len(settings.Brief) > 8000 || len(settings.Instructions) > 8000 || len(settings.Language) > 100 || len(settings.Tone) > 500 {
 		writeError(w, 422, "reply settings are too long")
 		return
 	}

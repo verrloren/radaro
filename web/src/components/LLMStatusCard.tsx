@@ -30,7 +30,7 @@ export function LLMStatusCard({ isAdmin }: Readonly<{isAdmin: boolean}>) {
     <ErrorLine error={error ?? status.error} />
     {current && <>
       <p>{current.detail}</p>
-      <p className="muted small">Provider: {current.provider} · Model: {current.model || "—"}</p>
+      <p className="muted small">Provider: {current.provider} · Model: {current.model || "—"}{current.reasoning_effort && ` · Reasoning: ${current.reasoning_effort}`}</p>
       <p className="muted small">{current.checked_at ? `Last check: ${fmtDateTime(current.checked_at)}` : "No connection check yet."}</p>
       <div className="btn-row">
         {isAdmin && <button type="button" className="btn sm" disabled={busy || !current.configured} onClick={() => void check()}>{busy ? "Checking…" : "Check connection"}</button>}

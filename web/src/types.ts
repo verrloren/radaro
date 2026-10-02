@@ -398,11 +398,12 @@ export interface PublishResult {
 }
 
 export interface LLMStatus {
+ reasoning_effort?: string;
  provider: string; model: string; configured: boolean;
  status: "not_configured" | "unchecked" | "connected" | "error";
  checked_at: string | null; detail: string;
 }
-export interface ReplySettings { brief: string; language: string; tone: string; }
+export interface ReplySettings { brief: string; instructions?: string; language: string; tone: string; }
 export interface RedditComment { author: string; body: string; score: number | null; url: string; }
 export interface RedditPostDetails {
  url: string; title: string; body: string; author: string; community: string; created_at: string | null;

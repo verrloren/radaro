@@ -7,6 +7,7 @@ import { ErrorLine, Loading } from "./Status";
 import { ConnectForm, RedditForm } from "./ConnectForms";
 import { ProjectAccounts } from "./ProjectAccounts";
 import { Modal } from "./ui/Modal";
+import { ReplySettingsForm } from "./ReplySettingsForm";
 
 interface Props {
   projects: AsyncState<Project[]>;
@@ -251,6 +252,8 @@ function ProjectDetail({
           </p>
         )}
       </div>
+
+      <ReplySettingsForm projectId={project.id} />
 
       <ProjectAccounts
         projectId={project.id}

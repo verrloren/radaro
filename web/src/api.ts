@@ -277,7 +277,7 @@ export const accountsApi = {
 export const replyApi = {
  post: (mention: string, projectId?: number, signal?: AbortSignal) =>
   request<RedditPostResponse>("GET", `/api/mentions/${encodeURIComponent(mention)}/reddit`, {params:{project_id:projectId},signal}),
- prepare: (mention: string, projectId: number | undefined, body: {body?: string; generate?: boolean}, signal?: AbortSignal) =>
+ prepare: (mention: string, projectId: number | undefined, body: {body?: string; generate?: boolean; regenerate?: boolean; draft_id?: number}, signal?: AbortSignal) =>
   request<DraftDetail>("POST", `/api/mentions/${encodeURIComponent(mention)}/reply`, {params:{project_id:projectId},body,signal}),
  settings: (projectId: number, signal?: AbortSignal) => request<ReplySettings>("GET", `/api/projects/${projectId}/reply-settings`,{signal}),
  saveSettings: (projectId: number, body: ReplySettings) => request<ReplySettings>("PUT", `/api/projects/${projectId}/reply-settings`,{body}),

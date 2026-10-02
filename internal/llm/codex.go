@@ -18,14 +18,14 @@ import (
 // Codex uses the CLI's ChatGPT login and renewal without exposing tokens to Radaro.
 // Calls share a gate so concurrent requests cannot race auth-cache renewal.
 type Codex struct {
-	Model, Home, Path string
+	Model, Home, Path, ReasoningEffort string
 }
 
 var codexGate = make(chan struct{}, 1)
 
 func newCodex(s Settings) *Codex {
 	home, _ := os.UserHomeDir()
-	return &Codex{Model: orDefault(s.Model, "gpt-6.1-sol"), Home: orDefault(s.CodexHome, filepath.Join(home, ".codex")), Path: orDefault(s.CodexPath, "codex")}
+	return &Codex{Model: orDefault(s.Model, "gpt-6.1-sol"), Home: orDefault(s.CodexHome, filepath.Join(home, ".codex")), Path: orDefault(s.CodexPath, "codex"), ReasoningEffort: orDefault(s.ReasoningEffort, "medium")}
 }
 
 func (*Codex) Name() string { return "codex" }
@@ -65,7 +65,7 @@ func (c *Codex) Complete(ctx context.Context, prompt, system string, maxTokens i
 		return "", errors.New("Codex workspace could not be created")
 	}
 	defer os.RemoveAll(work)
-	args := codexArgs(c.Model, system, maxTokens)
+	args := codexArgs(c.Model, orDefault(c.ReasoningEffort, "medium"), system, maxTokens)
 	cmd := exec.CommandContext(ctx, c.Path, args...)
 	cmd.Dir = work
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + work, "CODEX_HOME=" + c.Home, "TMPDIR=" + work}
@@ -122,13 +122,13 @@ func (c *Codex) Complete(ctx context.Context, prompt, system string, maxTokens i
 	return strings.TrimSpace(body), nil
 }
 
-func codexArgs(model, system string, maxTokens int) []string {
+func codexArgs(model, reasoningEffort, system string, maxTokens int) []string {
 	instructions := "You are a text completion service. Return only the requested text. Do not use tools, read files, browse, or perform actions. " + system
 	if maxTokens > 0 {
 		instructions += fmt.Sprintf(" Keep the answer within %d tokens.", maxTokens)
 	}
 	args := []string{"exec", "--ignore-user-config", "--ignore-rules", "--ephemeral", "--skip-git-repo-check", "--sandbox", "read-only", "--json", "--color", "never", "--model", model,
-		"-c", "approval_policy=\"never\"", "-c", "cli_auth_credentials_store=\"file\"", "-c", "web_search=\"disabled\"", "-c", "project_doc_max_bytes=0", "-c", "model_reasoning_effort=\"low\"", "-c", "analytics.enabled=false", "-c", "feedback.enabled=false", "-c", "developer_instructions=" + strconv.Quote(instructions)}
+		"-c", "approval_policy=\"never\"", "-c", "cli_auth_credentials_store=\"file\"", "-c", "web_search=\"disabled\"", "-c", "project_doc_max_bytes=0", "-c", "model_reasoning_effort=" + strconv.Quote(reasoningEffort), "-c", "analytics.enabled=false", "-c", "feedback.enabled=false", "-c", "developer_instructions=" + strconv.Quote(instructions)}
 	for _, feature := range []string{"shell_tool", "apps", "plugins", "remote_plugin", "hooks", "multi_agent", "goals", "memories", "shell_snapshot", "browser_use", "computer_use", "image_generation", "sleep_tool", "skill_search", "workspace_dependencies", "in_app_browser", "code_mode", "code_mode_host", "view_image"} {
 		args = append(args, "--disable", feature)
 	}

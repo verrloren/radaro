@@ -8,9 +8,10 @@ import (
 )
 
 type ReplySettings struct {
-	Brief    string `json:"brief"`
-	Language string `json:"language"`
-	Tone     string `json:"tone"`
+	Brief        string `json:"brief"`
+	Instructions string `json:"instructions"`
+	Language     string `json:"language"`
+	Tone         string `json:"tone"`
 }
 
 func (s *Store) ReplySettings(userID, projectID int64) (ReplySettings, error) {
