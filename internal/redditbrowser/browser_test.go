@@ -129,7 +129,7 @@ func TestBlockedPageStopsLoginActions(t *testing.T) {
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte(`<h1 id="heading"></h1><p id="message"></p><button onclick="window.clicked=true">Continue</button>`))
+		w.Write([]byte(`<div id="heading"></div><p id="message"></p><button onclick="window.clicked=true">Continue</button>`))
 	}))
 	defer srv.Close()
 	previous := site
@@ -150,7 +150,7 @@ func TestBlockedPageStopsLoginActions(t *testing.T) {
 		want             error
 	}{
 		{"whoa there, pardner!", "We've seen far too many requests come from your IP address recently.", ErrRateLimited},
-		{"You've been blocked by network security.", "File a ticket", ErrNetworkBlocked},
+		{"You've been blocked by network\nsecurity.", "File a ticket", ErrNetworkBlocked},
 	} {
 		t.Run(tc.want.Error(), func(t *testing.T) {
 			args, _ := json.Marshal([]string{tc.heading, tc.message})

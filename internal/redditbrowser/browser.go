@@ -191,7 +191,7 @@ func (s *Session) Navigate(ctx context.Context, target string) error {
 
 func (s *Session) checkBlock(ctx context.Context) error {
 	var status string
-	js := `(()=>{const headings=Array.from(document.querySelectorAll('h1,h2'),n=>n.innerText.toLowerCase()).join(' ');const text=document.body?.innerText.toLowerCase()||'';if(headings.includes('whoa there')&&text.includes('far too many requests')&&text.includes('ip address'))return 'rate_limited';if(headings.includes('blocked by network security'))return 'network_blocked';return '';})()`
+	js := `(()=>{const text=(document.body?.innerText||'').toLowerCase().replace(/\s+/g,' ').trim();if(text.length>3000)return '';if(text.includes('whoa there')&&text.includes('far too many requests')&&text.includes('ip address'))return 'rate_limited';if(text.includes('blocked by network security')&&text.includes('file a ticket'))return 'network_blocked';return '';})()`
 	if err := s.run(ctx, chromedp.Evaluate(js, &status)); err != nil {
 		return err
 	}
