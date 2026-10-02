@@ -42,6 +42,8 @@ func (s *Server) llmView() llmStatus {
 		v.Model = p.Model
 	case *llm.Ollama:
 		v.Model = p.Model
+	case *llm.Codex:
+		v.Model = p.Model
 	}
 	if !v.Configured {
 		return v

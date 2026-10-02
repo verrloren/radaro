@@ -1,6 +1,10 @@
 Radaro
 Copyright (c) 2026 Radaro contributors
 
+The Docker image includes OpenAI Codex CLI 0.160.0 (Copyright 2025 OpenAI),
+licensed under Apache-2.0. Its LICENSE and NOTICE are retained in
+third_party/codex and installed at /usr/local/share/licenses/openai-codex.
+
 Third-party portions (source adapters, cursor-based incremental/backfill
 scanning, the lexicon sentiment analyzer and its valence lexicon,
 term-frequency theme clustering, and the durable alert outbox) are covered

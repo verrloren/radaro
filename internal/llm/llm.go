@@ -23,12 +23,14 @@ type Provider interface {
 
 // Settings configure provider construction.
 type Settings struct {
-	Provider        string // none | anthropic | openai | ollama
+	Provider        string // none | anthropic | openai | ollama | codex
 	Model           string
 	AnthropicAPIKey string
 	OpenAIAPIKey    string
 	OpenAIBaseURL   string
 	OllamaHost      string
+	CodexHome       string
+	CodexPath       string
 }
 
 // New returns the configured provider.
@@ -49,8 +51,10 @@ func New(s Settings) (Provider, error) {
 			Model: orDefault(s.Model, "llama3.2"),
 			Host:  strings.TrimRight(orDefault(s.OllamaHost, "http://localhost:11434"), "/"),
 		}, nil
+	case "codex":
+		return newCodex(s), nil
 	}
-	return nil, fmt.Errorf("unknown LLM provider %q (options: none, anthropic, openai, ollama)", s.Provider)
+	return nil, fmt.Errorf("unknown LLM provider %q (options: none, anthropic, openai, ollama, codex)", s.Provider)
 }
 
 // Enabled reports whether a named (non-null) provider is selected.
@@ -68,7 +72,7 @@ type None struct{}
 func (None) Name() string    { return "none" }
 func (None) Available() bool { return false }
 func (None) Complete(context.Context, string, string, int) (string, error) {
-	return "", fmt.Errorf("no LLM provider configured; set RADARO_LLM_PROVIDER (anthropic|openai|ollama)")
+	return "", fmt.Errorf("no LLM provider configured; set RADARO_LLM_PROVIDER (anthropic|openai|ollama|codex)")
 }
 
 // Anthropic calls the Claude Messages API.

@@ -240,6 +240,7 @@ export default function App({ user, onSignOut }: Readonly<AppProps>) {
                   : "Sources, accounts and projects"}
               </h1>
             </header>
+            <LLMStatusCard isAdmin={user.is_admin} />
             <div className="grid-setup">
               <SourcesCard
                 isAdmin={user.is_admin}
@@ -260,7 +261,6 @@ export default function App({ user, onSignOut }: Readonly<AppProps>) {
                 onChanged={refresh}
               />
             </div>
-            <LLMStatusCard isAdmin={user.is_admin} />
             {user.is_admin && <ProxySettingsForm onChanged={refresh} />}
           </section>
         )}

@@ -27,6 +27,10 @@ func TestReadPostDetailsAndRulesWithoutSubmitting(t *testing.T) {
 			io.WriteString(w, `<div class="subreddit-rule-item"><div class="subreddit-rule-title">Be helpful</div><div class="subreddit-rule-description">No spam</div></div>`)
 			return
 		}
+		if strings.Contains(r.URL.Path, "/zero/") {
+			io.WriteString(w, `<div class="thing link"><a class="title">No comments yet</a><a class="comments">comment</a></div>`)
+			return
+		}
 		io.WriteString(w, `<div class="thing link"><a class="title">Question</a><a class="subreddit">r/go</a><a class="author">bob</a><time datetime="2026-10-01T12:00:00Z"></time><span class="score unvoted" title="0">0 points</span><a class="comments">1,234 comments</a><span class="linkflairlabel">Help</span><div class="usertext-body">The full post body</div></div><div class="linkinfo"><div class="score">0 points (75% upvoted)</div></div><div class="commentarea"><form class="usertext"><textarea name="text"></textarea></form></div><div class="thing comment"><div class="entry"><a class="author">carol</a><span class="score">3 points</span><div class="usertext-body">Existing answer</div><a class="bylink" href="/r/go/comments/abc/question/def/">permalink</a></div></div>`)
 	}))
 	defer srv.Close()
@@ -46,5 +50,9 @@ func TestReadPostDetailsAndRulesWithoutSubmitting(t *testing.T) {
 	}
 	if len(post.Replies) != 1 || post.Replies[0].Body != "Existing answer" || len(post.Rules) != 1 || post.Rules[0].Description != "No spam" || submissions != 0 {
 		t.Fatalf("context %+v submissions %d", post, submissions)
+	}
+	post, err = Details(ctx, c, "https://www.reddit.com/r/go/comments/zero/question/")
+	if err != nil || post.Comments == nil || *post.Comments != 0 || post.Score != nil {
+		t.Fatalf("zero comments/hidden score: %+v %v", post, err)
 	}
 }

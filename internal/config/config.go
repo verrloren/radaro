@@ -105,6 +105,8 @@ func Load() (*Config, error) {
 			OpenAIAPIKey:    orDefault(e.str("RADARO_LLM_API_KEY"), e.str("OPENAI_API_KEY")),
 			OpenAIBaseURL:   e.str("RADARO_LLM_BASE_URL"),
 			OllamaHost:      e.str("RADARO_LLM_HOST"),
+			CodexHome:       e.str("RADARO_CODEX_HOME"),
+			CodexPath:       e.str("RADARO_CODEX_PATH"),
 		},
 		SourceOptions: sources.Options{
 			RedditClientID:      e.str("RADARO_REDDIT_CLIENT_ID"),
