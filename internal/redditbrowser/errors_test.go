@@ -22,6 +22,7 @@ func TestBrowserOperationErrorsHideSensitiveDetails(t *testing.T) {
 		{"websocket: close 1006", "browser connection closed"},
 		{"page load error net::ERR_EMPTY_RESPONSE", "page load failed (ERR_EMPTY_RESPONSE)"},
 		{"page load error net::ERR_HTTP_RESPONSE_CODE_FAILURE", "page load failed (ERR_HTTP_RESPONSE_CODE_FAILURE)"},
+		{"page load error net::ERR_NETWORK_CHANGED", "network changed during page load"},
 		{"unknown error", "browser command failed"},
 	} {
 		t.Run(tc.raw, func(t *testing.T) {
@@ -36,6 +37,55 @@ func TestBrowserOperationErrorsHideSensitiveDetails(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestNavigationRetriesOnlyOneNetworkChange(t *testing.T) {
+	changed := browserOperationError(context.Background(), context.Background(), errors.New("page load error net::ERR_NETWORK_CHANGED"))
+	for _, tc := range []struct {
+		name          string
+		first, second error
+		calls         int
+	}{
+		{"recovered", changed, nil, 2},
+		{"still failing", changed, changed, 2},
+		{"proxy failure", errors.New("proxy failed"), nil, 1},
+		{"rate limited", ErrRateLimited, nil, 1},
+		{"network blocked", ErrNetworkBlocked, nil, 1},
+		{"expired session", ErrSession, nil, 1},
+		{"loaded", nil, nil, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			err := retryNavigation(context.Background(), func() error {
+				calls++
+				if calls == 1 {
+					return tc.first
+				}
+				return tc.second
+			})
+			want := tc.first
+			if tc.calls == 2 {
+				want = tc.second
+			}
+			if calls != tc.calls || !errors.Is(err, want) {
+				t.Fatalf("calls=%d error=%v", calls, err)
+			}
+		})
+	}
+}
+
+func TestNavigationDoesNotRetryAfterRequestCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	calls := 0
+	err := retryNavigation(ctx, func() error {
+		calls++
+		cancel()
+		return errNetworkChanged
+	})
+	if calls != 1 || !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled navigation was retried: calls=%d error=%v", calls, err)
 	}
 }
 

@@ -207,10 +207,30 @@ func (s *Session) run(ctx context.Context, actions ...chromedp.Action) error {
 }
 
 func (s *Session) Navigate(ctx context.Context, target string) error {
-	if err := s.run(ctx, chromedp.Navigate(target)); err != nil {
+	if err := retryNavigation(ctx, func() error { return s.run(ctx, chromedp.Navigate(target)) }); err != nil {
 		return fmt.Errorf("loading Reddit page: %w", err)
 	}
 	return s.checkBlock(ctx)
+}
+
+// Chromium can interrupt the first page load while its network state settles.
+// Repeat only that GET navigation, never browser input or form submission.
+func retryNavigation(ctx context.Context, load func() error) error {
+	err := load()
+	if !errors.Is(err, errNetworkChanged) {
+		return err
+	}
+	timer := time.NewTimer(250 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return browserOperationError(ctx, ctx, ctx.Err())
+	case <-timer.C:
+		if ctx.Err() != nil {
+			return browserOperationError(ctx, ctx, ctx.Err())
+		}
+		return load()
+	}
 }
 
 func (s *Session) checkBlock(ctx context.Context) error {

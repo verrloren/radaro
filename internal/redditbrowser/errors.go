@@ -8,16 +8,19 @@ import (
 )
 
 var browserNetworkCode = regexp.MustCompile(`^page load error net::(ERR_[A-Z_]+)\b`)
+var errNetworkChanged = errors.New("Reddit browser network changed during page load")
 
 // Chromium errors can contain URLs, proxy credentials or submitted text.
 // Only fixed descriptions and known network codes may reach callers or logs.
 type operationError struct {
 	message string
 	cause   error
+	kind    error
 }
 
-func (e *operationError) Error() string { return e.message }
-func (e *operationError) Unwrap() error { return e.cause }
+func (e *operationError) Error() string        { return e.message }
+func (e *operationError) Unwrap() error        { return e.cause }
+func (e *operationError) Is(target error) bool { return e.kind != nil && target == e.kind }
 
 func browserOperationError(ctx, browser context.Context, err error) error {
 	if ctx.Err() != nil {
@@ -26,6 +29,7 @@ func browserOperationError(ctx, browser context.Context, err error) error {
 		err = browser.Err()
 	}
 	message := "Reddit browser command failed; try loading again"
+	var kind error
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		message = "Reddit browser request timed out; the page or proxy did not respond in time"
@@ -34,6 +38,9 @@ func browserOperationError(ctx, browser context.Context, err error) error {
 	default:
 		raw := err.Error()
 		switch {
+		case browserNetworkCode.FindString(raw) == "page load error net::ERR_NETWORK_CHANGED":
+			message = "Reddit browser network changed during page load; try loading again"
+			kind = errNetworkChanged
 		case strings.Contains(raw, "ERR_PROXY_CONNECTION_FAILED"), strings.Contains(raw, "ERR_TUNNEL_CONNECTION_FAILED"), strings.Contains(raw, "ERR_NO_SUPPORTED_PROXIES"):
 			message = "Reddit proxy connection failed; check the account proxy"
 		case strings.Contains(raw, "ERR_TIMED_OUT"), strings.Contains(raw, "ERR_CONNECTION_TIMED_OUT"):
@@ -52,5 +59,5 @@ func browserOperationError(ctx, browser context.Context, err error) error {
 			}
 		}
 	}
-	return &operationError{message: message, cause: err}
+	return &operationError{message: message, cause: err, kind: kind}
 }
