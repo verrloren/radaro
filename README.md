@@ -188,7 +188,7 @@ A refused publish sends nothing and says when the draft may go out; `radaro publ
 
 ## Running it on a server
 
-Radaro runs as one Go binary with one SQLite file. Reddit browser connections additionally require Chromium. Set `RADARO_BROWSER_PATH` if it is outside PATH; the Docker image includes it. Browser profiles are temporary and separate for every connection.
+Radaro runs as one Go binary with one SQLite file. Reddit browser connections additionally require Chromium. Set `RADARO_BROWSER_PATH` if it is outside PATH. The Docker image includes current Chromium and uses its headed mode with a private Xvfb display. Outside Docker, enable that mode with `RADARO_BROWSER_HEADED=true xvfb-run -a radaro serve`. Browser profiles are temporary and separate for every connection; each account's verified cookies and proxy are saved in SQLite. Browser changes cannot guarantee that Reddit will accept a connection.
 
 1. Run `radaro serve` as its own user with `RADARO_DB` on persistent storage (or `docker compose up -d`, which keeps it in a volume). It binds to `127.0.0.1:8042`.
 2. Put a TLS reverse proxy in front of it; passwords and session cookies must not travel over plain HTTP. With [Caddy](https://caddyserver.com): `radaro.example.com { reverse_proxy 127.0.0.1:8042 }`. Radaro reads `X-Forwarded-Proto` and `X-Forwarded-For` from a proxy on the same machine or a private network (Docker), so cookies are `Secure` and rate limits apply per client.

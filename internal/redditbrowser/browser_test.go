@@ -182,7 +182,7 @@ func TestCaptchaBeforeLoginFormRetainsOnlyTemporaryCredentials(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		if r.URL.Path == "/login/" {
-			w.Write([]byte(`<button id="challenge" onclick="document.body.innerHTML=document.querySelector('#login-form').innerHTML">Human confirmation</button><template id="login-form"><input name="username"><input type="password"><button type="submit" onclick="if(document.querySelector('input[name=username]').value==='alice'&&document.querySelector('input[type=password]').value==='pw')location.href='/'">Login</button></template>`))
+			w.Write([]byte(`<button id="challenge" onclick="document.body.innerHTML=document.querySelector('#login-form').innerHTML">Human confirmation</button><template id="login-form"><input name="username"><input type="password" oninput="setTimeout(()=>document.querySelector('button').disabled=false,150)"><button type="button" disabled onclick="if(document.querySelector('input[name=username]').value==='alice'&&document.querySelector('input[type=password]').value==='pw')location.href='/'">Log In</button></template>`))
 			return
 		}
 		if r.URL.Path == "/" {
@@ -219,5 +219,20 @@ func TestCaptchaBeforeLoginFormRetainsOnlyTemporaryCredentials(t *testing.T) {
 	c, err := s.Finish(ctx)
 	if err != nil || c.Username != "alice" {
 		t.Fatalf("login did not continue after confirmation: %v", err)
+	}
+}
+
+func TestHeadedBrowserWithoutDisplayReleasesSlot(t *testing.T) {
+	if Executable() == "" {
+		t.Skip("Chromium not installed")
+	}
+	t.Setenv("RADARO_BROWSER_HEADED", "true")
+	t.Setenv("DISPLAY", "")
+	before := len(slots)
+	if _, err := Open(context.Background(), "", true); err == nil || !strings.Contains(err.Error(), "display") {
+		t.Fatal("headed mode did not report missing display")
+	}
+	if len(slots) != before {
+		t.Fatal("failed browser start leaked a slot")
 	}
 }

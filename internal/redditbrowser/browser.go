@@ -6,9 +6,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +29,7 @@ const Width, Height = 1000, 720
 var site = "https://old.reddit.com"
 var loginSite = "https://www.reddit.com/login/"
 var slots = make(chan struct{}, 4)
+var headedLaunch sync.Mutex
 var ErrSession = errors.New("Reddit session expired; reconnect this account")
 var ErrChallenge = errors.New("Reddit requires browser confirmation; reconnect this account to continue")
 var ErrRateLimited = errors.New("Reddit has rate-limited this IP; stop retrying and wait before reconnecting")
@@ -96,6 +99,26 @@ func Open(parent context.Context, proxy string, login bool) (*Session, error) {
 	}
 	opts := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
 	opts = append(opts, chromedp.ExecPath(path), chromedp.WindowSize(Width, Height), chromedp.Flag("disable-dev-shm-usage", true), chromedp.Flag("force-webrtc-ip-handling-policy", "disable_non_proxied_udp"))
+	if os.Getenv("RADARO_BROWSER_HEADED") == "true" {
+		if os.Getenv("DISPLAY") == "" {
+			stopProxy()
+			<-slots
+			return nil, errors.New("headed Chromium requires a display; start Radaro with xvfb-run")
+		}
+		// Serialize selection and launch so simultaneous sessions cannot choose
+		// the same DevTools port. Each endpoint stays on loopback.
+		headedLaunch.Lock()
+		defer headedLaunch.Unlock()
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			stopProxy()
+			<-slots
+			return nil, errors.New("could not allocate a browser port")
+		}
+		port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
+		ln.Close()
+		opts = append(opts, chromedp.Flag("headless", false), chromedp.Flag("enable-automation", false), chromedp.Flag("remote-debugging-port", port), chromedp.Flag("remote-debugging-address", "127.0.0.1"))
+	}
 	if os.Getenv("RADARO_BROWSER_NO_SANDBOX") == "true" {
 		opts = append(opts, chromedp.NoSandbox)
 	}
@@ -246,7 +269,7 @@ func (s *Session) fillLogin(ctx context.Context) error {
 		return nil
 	}
 	args, _ := json.Marshal([]string{s.loginUser, s.loginPassword})
-	js := `(()=>{` + deepQuery + `const [user,pass]=` + string(args) + `; const u=all(document,'input[name="username"],input[name="user"],#login-username').find(visible);const p=all(document,'input[type="password"]').find(visible);if(!u||!p)return false;for(const [el,val] of [[u,user],[p,pass]]){Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el,val);el.dispatchEvent(new Event('input',{bubbles:true,composed:true}));el.dispatchEvent(new Event('change',{bubbles:true,composed:true}));}const b=all(document,'button[type="submit"],button.login').find(visible);if(b)b.click();return true;})()`
+	js := `(()=>{` + deepQuery + `const [user,pass]=` + string(args) + `; const u=all(document,'input[name="username"],input[name="user"],#login-username').find(visible);const p=all(document,'input[type="password"]').find(visible);if(!u||!p)return false;for(const [el,val] of [[u,user],[p,pass]]){Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el,val);el.dispatchEvent(new Event('input',{bubbles:true,composed:true}));el.dispatchEvent(new Event('change',{bubbles:true,composed:true}));}return true;})()`
 	var filled bool
 	// A changed login form is still usable manually in the interactive view.
 	if err := s.run(ctx, chromedp.Evaluate(js, &filled)); err != nil {
@@ -254,6 +277,16 @@ func (s *Session) fillLogin(ctx context.Context) error {
 	}
 	if filled {
 		s.loginUser, s.loginPassword = "", ""
+		button := deepQuery + `function loginButton(){return all(document,'button').find(b=>visible(b)&&(b.type==='submit'||b.classList.contains('login')||/^(log\s*in|sign\s*in)$/i.test(b.innerText.trim())));}`
+		var ready bool
+		if err := s.run(ctx, chromedp.Poll(`(()=>{`+button+`const b=loginButton();return !!b&&!b.disabled;})()`, &ready, chromedp.WithPollingTimeout(5*time.Second))); err != nil {
+			// Keep the filled form available for manual submission.
+			return nil
+		}
+		// Submission is dispatched once; a navigation must never trigger a retry.
+		if err := s.run(ctx, chromedp.Evaluate(`(()=>{`+button+`const b=loginButton();if(b&&!b.disabled)b.click();})()`, nil)); err != nil {
+			return err
+		}
 		return s.run(ctx, chromedp.Sleep(500*time.Millisecond))
 	}
 	return nil
