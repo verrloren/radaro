@@ -42,7 +42,7 @@ func (p *replyLLM) Complete(_ context.Context, prompt, system string, _ int) (st
 
 func TestUnsuitablePromotionPreservesDraftAndLLMConnection(t *testing.T) {
 	s, st, h, id := replyServer(t)
-	p := &replyLLM{body: "RADARO_PROMOTION_UNSUITABLE: No Self-Advertising prohibits software project promotion."}
+	p := &replyLLM{body: "RADARO_PROMOTION_UNSUITABLE: The project facts do not establish a truthful connection to this topic."}
 	s.newLLM = func() (llm.Provider, error) { return p, nil }
 	path := "/api/mentions/" + id + "/reply"
 	r := do(h, "POST", path, `{"generate":true}`)
@@ -61,7 +61,7 @@ func TestUnsuitablePromotionPreservesDraftAndLLMConnection(t *testing.T) {
 	}
 	r = do(h, "POST", path, `{"generate":true,"regenerate":true,"draft_id":`+strconv.FormatInt(old.ID, 10)+`}`)
 	got, _ := st.Draft(1, old.ID)
-	if r.Code != 422 || !strings.Contains(r.Body.String(), "No Self-Advertising") || got.Body != oldPtr.Body || got.Status != oldPtr.Status || got.UpdatedAt != oldPtr.UpdatedAt {
+	if r.Code != 422 || !strings.Contains(r.Body.String(), "truthful connection") || got.Body != oldPtr.Body || got.Status != oldPtr.Status || got.UpdatedAt != oldPtr.UpdatedAt {
 		t.Fatalf("unsuitability changed draft: status=%d body=%s", r.Code, r.Body)
 	}
 	if s.llmView().Status != "connected" {

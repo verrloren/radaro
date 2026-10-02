@@ -15,10 +15,10 @@ type fakeProvider struct {
 }
 
 func TestPromotionUnsuitabilityDoesNotBecomeAComment(t *testing.T) {
-	p := &fakeProvider{body: unsuitablePrefix + " No Self-Advertising prohibits promotion of software projects. "}
+	p := &fakeProvider{body: unsuitablePrefix + " The supplied project facts do not establish a connection to this topic. "}
 	body, err := Reddit(context.Background(), p, store.ReplySettings{Brief: "Promote my open-source project"}, redditbrowser.PostDetails{CanReply: true})
 	var unsuitable *UnsuitablePromotionError
-	if body != "" || !errors.As(err, &unsuitable) || unsuitable.Reason != "No Self-Advertising prohibits promotion of software projects." {
+	if body != "" || !errors.As(err, &unsuitable) || unsuitable.Reason != "The supplied project facts do not establish a connection to this topic." {
 		t.Fatalf("unsuitable promotion became a comment: %q %v", body, err)
 	}
 	if !strings.Contains(p.system, "Do not silently replace") || strings.Contains(p.system, "If the project brief is empty") {
@@ -33,6 +33,19 @@ func TestPromotionUnsuitabilityDoesNotBecomeAComment(t *testing.T) {
 	_, err = Reddit(context.Background(), p, store.ReplySettings{}, redditbrowser.PostDetails{CanReply: true})
 	if !errors.As(err, &unsuitable) || unsuitable.Reason == "" {
 		t.Fatal("missing explanation")
+	}
+}
+
+func TestPromotionDraftKeepsCommunityRulesForHumanReview(t *testing.T) {
+	p := &fakeProvider{body: "Check how the launcher differs. AGI OS is another open-source Arch-based project with AI in the same ecosystem."}
+	post := redditbrowser.PostDetails{Title: "Arch terminal question", CanReply: true, Rules: []redditbrowser.Rule{{Name: "No Self-Advertising", Description: "Do not advertise your own software projects."}}}
+	settings := store.ReplySettings{Brief: "Promote AGI OS, an open-source Arch-based project with AI. No links."}
+	body, err := Reddit(context.Background(), p, settings, post)
+	if err != nil || body != p.body || !strings.Contains(p.prompt, "No Self-Advertising") || !strings.Contains(p.prompt, settings.Brief) {
+		t.Fatalf("rule warning prevented a private draft: %q %v", body, err)
+	}
+	if !strings.Contains(p.system, "not an automatic veto") || !strings.Contains(p.system, "Do not invent") {
+		t.Fatal("drafting and human rule review were not separated")
 	}
 }
 
