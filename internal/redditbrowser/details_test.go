@@ -31,6 +31,10 @@ func TestReadPostDetailsAndRulesWithoutSubmitting(t *testing.T) {
 			io.WriteString(w, `<div class="thing link"><a class="title">No comments yet</a><a class="comments">comment</a></div>`)
 			return
 		}
+		if strings.Contains(r.URL.Path, "/crosspost/") {
+			io.WriteString(w, `<div id="header"><span class="redditname"><a>go</a></span></div><div id="siteTable"><div class="thing link"><a class="title">Crossposted question</a><div class="crosspost-preview"><a class="subreddit">r/original</a><div class="usertext-body">Original post content</div></div></div></div>`)
+			return
+		}
 		io.WriteString(w, `<div class="thing link"><a class="title">Question</a><a class="subreddit">r/go</a><a class="author">bob</a><time datetime="2026-10-01T12:00:00Z"></time><span class="score unvoted" title="0">0 points</span><a class="comments">1,234 comments</a><span class="linkflairlabel">Help</span><div class="usertext-body">The full post body</div></div><div class="linkinfo"><div class="score">0 points (75% upvoted)</div></div><div class="commentarea"><form class="usertext"><textarea name="text"></textarea></form></div><div class="thing comment"><div class="entry"><a class="author">carol</a><span class="score">3 points</span><div class="usertext-body">Existing answer</div><a class="bylink" href="/r/go/comments/abc/question/def/">permalink</a></div></div>`)
 	}))
 	defer srv.Close()
@@ -39,7 +43,7 @@ func TestReadPostDetailsAndRulesWithoutSubmitting(t *testing.T) {
 	defer func() { site = previous }()
 	u, _ := url.Parse(site)
 	c := Credentials{Username: "alice", Cookies: []*network.CookieParam{{Name: "reddit_session", Value: "fake", Domain: u.Hostname(), Path: "/"}}}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	post, err := Details(ctx, c, "https://www.reddit.com/r/go/comments/abc/question/")
 	if err != nil {
@@ -54,5 +58,9 @@ func TestReadPostDetailsAndRulesWithoutSubmitting(t *testing.T) {
 	post, err = Details(ctx, c, "https://www.reddit.com/r/go/comments/zero/question/")
 	if err != nil || post.Comments == nil || *post.Comments != 0 || post.Score != nil {
 		t.Fatalf("zero comments/hidden score: %+v %v", post, err)
+	}
+	post, err = Details(ctx, c, "https://www.reddit.com/r/go/comments/crosspost/question/")
+	if err != nil || post.Community != "go" || post.Body != "Original post content" || len(post.Rules) != 1 {
+		t.Fatalf("crosspost destination context: %+v %v", post, err)
 	}
 }
