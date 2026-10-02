@@ -2,6 +2,7 @@ package draftprep
 
 import (
 	"context"
+	"errors"
 	"github.com/verrloren/radaro/internal/redditbrowser"
 	"github.com/verrloren/radaro/internal/store"
 	"strings"
@@ -11,6 +12,28 @@ import (
 type fakeProvider struct {
 	body, prompt, system string
 	calls                int
+}
+
+func TestPromotionUnsuitabilityDoesNotBecomeAComment(t *testing.T) {
+	p := &fakeProvider{body: unsuitablePrefix + " No Self-Advertising prohibits promotion of software projects. "}
+	body, err := Reddit(context.Background(), p, store.ReplySettings{Brief: "Promote my open-source project"}, redditbrowser.PostDetails{CanReply: true})
+	var unsuitable *UnsuitablePromotionError
+	if body != "" || !errors.As(err, &unsuitable) || unsuitable.Reason != "No Self-Advertising prohibits promotion of software projects." {
+		t.Fatalf("unsuitable promotion became a comment: %q %v", body, err)
+	}
+	if !strings.Contains(p.system, "Do not silently replace") || strings.Contains(p.system, "If the project brief is empty") {
+		t.Fatal("promotion request can still be silently ignored")
+	}
+	p.body = unsuitablePrefix + strings.Repeat("界", 500)
+	_, err = Reddit(context.Background(), p, store.ReplySettings{}, redditbrowser.PostDetails{CanReply: true})
+	if !errors.As(err, &unsuitable) || len([]rune(unsuitable.Reason)) != 400 {
+		t.Fatal("unbounded explanation")
+	}
+	p.body = unsuitablePrefix
+	_, err = Reddit(context.Background(), p, store.ReplySettings{}, redditbrowser.PostDetails{CanReply: true})
+	if !errors.As(err, &unsuitable) || unsuitable.Reason == "" {
+		t.Fatal("missing explanation")
+	}
 }
 
 func (p *fakeProvider) Name() string    { return "test" }

@@ -23,6 +23,7 @@ type replyLLM struct {
 	calls  int
 	prompt string
 	fail   bool
+	body   string
 }
 
 func (p *replyLLM) Name() string    { return "test" }
@@ -33,7 +34,42 @@ func (p *replyLLM) Complete(_ context.Context, prompt, system string, _ int) (st
 	if p.fail {
 		return "", errors.New("secret-provider-key")
 	}
+	if p.body != "" {
+		return p.body, nil
+	}
 	return "A helpful reply", nil
+}
+
+func TestUnsuitablePromotionPreservesDraftAndLLMConnection(t *testing.T) {
+	s, st, h, id := replyServer(t)
+	p := &replyLLM{body: "RADARO_PROMOTION_UNSUITABLE: No Self-Advertising prohibits software project promotion."}
+	s.newLLM = func() (llm.Provider, error) { return p, nil }
+	path := "/api/mentions/" + id + "/reply"
+	r := do(h, "POST", path, `{"generate":true}`)
+	if ds, _ := st.Drafts(1, "", 0); r.Code != 422 || len(ds) != 0 {
+		t.Fatal("unsuitable promotion created a new draft")
+	}
+	r = do(h, "POST", path, `{"body":"Existing manually edited reply"}`)
+	var old store.Draft
+	json.Unmarshal(r.Body.Bytes(), &old)
+	if r.Code != 201 {
+		t.Fatal(r.Body)
+	}
+	oldPtr, err := st.ApproveDraft(1, old.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r = do(h, "POST", path, `{"generate":true,"regenerate":true,"draft_id":`+strconv.FormatInt(old.ID, 10)+`}`)
+	got, _ := st.Draft(1, old.ID)
+	if r.Code != 422 || !strings.Contains(r.Body.String(), "No Self-Advertising") || got.Body != oldPtr.Body || got.Status != oldPtr.Status || got.UpdatedAt != oldPtr.UpdatedAt {
+		t.Fatalf("unsuitability changed draft: status=%d body=%s", r.Code, r.Body)
+	}
+	if s.llmView().Status != "connected" {
+		t.Fatal("unsuitable post marked provider disconnected")
+	}
+	if ds, _ := st.Drafts(1, "", 0); len(ds) != 1 {
+		t.Fatal("unsuitability created a draft")
+	}
 }
 
 func replyServer(t *testing.T) (*Server, *store.Store, http.Handler, string) {

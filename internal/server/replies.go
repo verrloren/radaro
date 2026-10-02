@@ -163,7 +163,13 @@ func (s *Server) prepareReply(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		body.Body, err = draftprep.Reddit(ctx, provider, settings, post)
-		s.recordLLM(err == nil)
+		var unsuitable *draftprep.UnsuitablePromotionError
+		skipped := errors.As(err, &unsuitable)
+		s.recordLLM(err == nil || skipped)
+		if skipped {
+			writeError(w, 422, err.Error())
+			return
+		}
 		if err != nil {
 			writeError(w, 502, err.Error())
 			return
