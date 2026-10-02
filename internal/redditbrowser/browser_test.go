@@ -2,6 +2,7 @@ package redditbrowser
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -102,6 +103,75 @@ func TestTargetsAndCredentialsAreRestricted(t *testing.T) {
 		if cookieDomain(domain) {
 			t.Fatal("unrelated cookie accepted")
 		}
+	}
+}
+
+func TestRecaptchaOriginsAreRestricted(t *testing.T) {
+	s := &Session{login: true}
+	for _, host := range []string{"www.google.com", "recaptcha.google.com", "www.recaptcha.net"} {
+		if !s.allowed("https://"+host+"/recaptcha/api2/bframe", network.ResourceTypeDocument, "GET") {
+			t.Fatalf("required reCAPTCHA frame blocked on %s", host)
+		}
+		if s.allowed("https://"+host+"/unrelated", network.ResourceTypeDocument, "GET") {
+			t.Fatalf("unrelated Google page allowed on %s", host)
+		}
+	}
+	for _, raw := range []string{"https://recaptcha.google.com.evil.test/recaptcha/api2/bframe", "http://recaptcha.google.com/recaptcha/api2/bframe", "https://recaptcha.google.com:9999/recaptcha/api2/bframe"} {
+		if s.allowed(raw, network.ResourceTypeDocument, "GET") {
+			t.Fatal("untrusted reCAPTCHA frame allowed")
+		}
+	}
+}
+
+func TestBlockedPageStopsLoginActions(t *testing.T) {
+	if Executable() == "" {
+		t.Skip("Chromium not installed")
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<h1 id="heading"></h1><p id="message"></p><button onclick="window.clicked=true">Continue</button>`))
+	}))
+	defer srv.Close()
+	previous := site
+	site = srv.URL
+	defer func() { site = previous }()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	s, err := Open(ctx, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err = s.Navigate(ctx, srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		heading, message string
+		want             error
+	}{
+		{"whoa there, pardner!", "We've seen far too many requests come from your IP address recently.", ErrRateLimited},
+		{"You've been blocked by network security.", "File a ticket", ErrNetworkBlocked},
+	} {
+		t.Run(tc.want.Error(), func(t *testing.T) {
+			args, _ := json.Marshal([]string{tc.heading, tc.message})
+			js := `(()=>{const [heading,message]=` + string(args) + `;document.querySelector('#heading').innerText=heading;document.querySelector('#message').innerText=message;window.clicked=false;})()`
+			if err := s.run(ctx, chromedp.Evaluate(js, nil)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.Screenshot(ctx); !errors.Is(err, tc.want) {
+				t.Fatalf("screenshot did not report the block: %v", err)
+			}
+			if err := s.Input(ctx, Input{Kind: "key", Key: "Enter"}); !errors.Is(err, tc.want) {
+				t.Fatalf("blocked page accepted input: %v", err)
+			}
+			if _, err := s.Finish(ctx); !errors.Is(err, tc.want) {
+				t.Fatalf("finish did not report the block: %v", err)
+			}
+			var clicked bool
+			if err := s.run(ctx, chromedp.Evaluate(`window.clicked`, &clicked)); err != nil || clicked {
+				t.Fatal("an action was dispatched on the blocked page")
+			}
+		})
 	}
 }
 

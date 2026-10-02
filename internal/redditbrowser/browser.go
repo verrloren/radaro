@@ -29,6 +29,8 @@ var loginSite = "https://www.reddit.com/login/"
 var slots = make(chan struct{}, 4)
 var ErrSession = errors.New("Reddit session expired; reconnect this account")
 var ErrChallenge = errors.New("Reddit requires browser confirmation; reconnect this account to continue")
+var ErrRateLimited = errors.New("Reddit has rate-limited this IP; stop retrying and wait before reconnecting")
+var ErrNetworkBlocked = errors.New("Reddit has blocked this connection with network security; sign-in cannot continue")
 
 type Credentials struct {
 	Username string                 `json:"username"`
@@ -142,7 +144,7 @@ func (s *Session) allowed(raw string, typ network.ResourceType, method string) b
 		return false
 	}
 	h := u.Hostname()
-	allowed := u.Host == base.Host || h == "reddit.com" || strings.HasSuffix(h, ".reddit.com") || h == "redditstatic.com" || strings.HasSuffix(h, ".redditstatic.com") || h == "redditmedia.com" || strings.HasSuffix(h, ".redditmedia.com") || (h == "www.google.com" || h == "www.recaptcha.net") && strings.HasPrefix(u.Path, "/recaptcha/") || h == "www.gstatic.com" || h == "hcaptcha.com" || strings.HasSuffix(h, ".hcaptcha.com") || h == "challenges.cloudflare.com"
+	allowed := u.Host == base.Host || h == "reddit.com" || strings.HasSuffix(h, ".reddit.com") || h == "redditstatic.com" || strings.HasSuffix(h, ".redditstatic.com") || h == "redditmedia.com" || strings.HasSuffix(h, ".redditmedia.com") || (h == "www.google.com" || h == "recaptcha.google.com" || h == "www.recaptcha.net") && strings.HasPrefix(u.Path, "/recaptcha/") || h == "www.gstatic.com" || h == "hcaptcha.com" || strings.HasSuffix(h, ".hcaptcha.com") || h == "challenges.cloudflare.com"
 	if !allowed {
 		return false
 	}
@@ -181,7 +183,25 @@ func (s *Session) run(ctx context.Context, actions ...chromedp.Action) error {
 }
 
 func (s *Session) Navigate(ctx context.Context, target string) error {
-	return s.run(ctx, chromedp.Navigate(target))
+	if err := s.run(ctx, chromedp.Navigate(target)); err != nil {
+		return err
+	}
+	return s.checkBlock(ctx)
+}
+
+func (s *Session) checkBlock(ctx context.Context) error {
+	var status string
+	js := `(()=>{const headings=Array.from(document.querySelectorAll('h1,h2'),n=>n.innerText.toLowerCase()).join(' ');const text=document.body?.innerText.toLowerCase()||'';if(headings.includes('whoa there')&&text.includes('far too many requests')&&text.includes('ip address'))return 'rate_limited';if(headings.includes('blocked by network security'))return 'network_blocked';return '';})()`
+	if err := s.run(ctx, chromedp.Evaluate(js, &status)); err != nil {
+		return err
+	}
+	switch status {
+	case "rate_limited":
+		return ErrRateLimited
+	case "network_blocked":
+		return ErrNetworkBlocked
+	}
+	return nil
 }
 
 // Only reads may be repeated when navigation replaces the JavaScript context.
@@ -219,6 +239,9 @@ func (s *Session) Login(ctx context.Context, username, password string) error {
 // A CAPTCHA can appear before the login form. Keep credentials only in memory
 // until that form appears, then discard them immediately after submission.
 func (s *Session) fillLogin(ctx context.Context) error {
+	if err := s.checkBlock(ctx); err != nil {
+		return err
+	}
 	if s.loginPassword == "" {
 		return nil
 	}
@@ -250,6 +273,9 @@ func (s *Session) Screenshot(ctx context.Context) (Screen, error) {
 func (s *Session) Input(ctx context.Context, in Input) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.checkBlock(ctx); err != nil {
+		return err
+	}
 	var action chromedp.Action
 	switch in.Kind {
 	case "click":
@@ -285,6 +311,9 @@ func (s *Session) Input(ctx context.Context, in Input) error {
 func (s *Session) Finish(ctx context.Context) (*Credentials, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.checkBlock(ctx); err != nil {
+		return nil, err
+	}
 	var current string
 	if err := s.run(ctx, chromedp.Location(&current)); err != nil {
 		return nil, err

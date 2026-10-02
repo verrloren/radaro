@@ -94,6 +94,24 @@ describe("Reddit browser sign-in", () => {
     expect(await screen.findByText(/needs Chromium installed/)).toBeTruthy();
     expect(screen.queryByLabelText("Reddit password")).toBeNull();
   });
+  it("shows an IP block and stops background polling without completing the account", async () => {
+    const interval = vi.spyOn(window, "setInterval");
+    const done = vi.fn(); const user = userEvent.setup();
+    render(<RedditBrowserForm onDone={done} />);
+    await user.type(await screen.findByLabelText("Reddit login or email"), "alice");
+    await user.type(screen.getByLabelText("Reddit password"), "pass");
+    await user.click(screen.getByRole("button", { name: "Connect Reddit" }));
+    await screen.findByLabelText("Interactive Reddit sign-in");
+    await waitFor(() => expect((screen.getByRole("button", { name: "Complete connection" }) as HTMLButtonElement).disabled).toBe(false));
+    const refresh = interval.mock.calls.find((call) => call[1] === 1000)![0] as () => void;
+    const message = "Reddit has rate-limited this IP; stop retrying and wait before reconnecting";
+    vi.mocked(api.redditBrowserInput).mockRejectedValueOnce(new ApiError(502, message));
+    await act(async () => { refresh(); });
+    expect(await screen.findByText(message)).toBeTruthy();
+    await act(async () => { refresh(); refresh(); });
+    expect(api.redditBrowserInput).toHaveBeenCalledTimes(1);
+    expect(done).not.toHaveBeenCalled();
+  });
   it("changes only the selected account's proxy and can clear it", async () => {
     vi.spyOn(api, "redditBrowserProxy").mockResolvedValue({ configured: true });
     const done = vi.fn(); const user = userEvent.setup();
