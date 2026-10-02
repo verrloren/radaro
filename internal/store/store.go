@@ -312,13 +312,13 @@ func (s *Store) Upsert(mentions []*model.Mention, updateTheme bool) (int, error)
 		themeUpdate = "theme=excluded.theme, "
 	}
 	upsert := `INSERT INTO mentions (id, source, query, author, title, text, url, created_at,
-			score, sentiment, sentiment_score, theme, fetched_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+			score, sentiment, sentiment_score, theme, fetched_at, reddit)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id, query) DO UPDATE SET
 			source=excluded.source, author=excluded.author, title=excluded.title,
 			text=excluded.text, url=excluded.url, created_at=excluded.created_at,
 			sentiment=excluded.sentiment, sentiment_score=excluded.sentiment_score,
-			` + themeUpdate + `score=excluded.score, fetched_at=excluded.fetched_at`
+			` + themeUpdate + `score=excluded.score, fetched_at=excluded.fetched_at, reddit=COALESCE(excluded.reddit,mentions.reddit)`
 	newCount := 0
 	for _, m := range mentions {
 		var exists int
@@ -332,8 +332,16 @@ func (s *Store) Upsert(mentions []*model.Mention, updateTheme bool) (int, error)
 		if m.Sentiment != "" {
 			sentiment = string(m.Sentiment)
 		}
+		var reddit any
+		if m.Reddit != nil {
+			b, err := json.Marshal(m.Reddit)
+			if err != nil {
+				return 0, err
+			}
+			reddit = string(b)
+		}
 		if _, err := tx.Exec(upsert, m.ID, m.Source, m.Query, m.Author, m.Title, m.Text, m.URL,
-			stamp(m.CreatedAt), m.Score, sentiment, m.SentimentScore, m.Theme, now); err != nil {
+			stamp(m.CreatedAt), m.Score, sentiment, m.SentimentScore, m.Theme, now, reddit); err != nil {
 			return 0, err
 		}
 	}
@@ -436,7 +444,7 @@ func (s *Store) Mentions(f MentionFilter) ([]*model.Mention, error) {
 	if err != nil {
 		return nil, err
 	}
-	q := `SELECT id, source, query, author, title, text, url, created_at, score, sentiment, sentiment_score, theme
+	q := `SELECT id, source, query, author, title, text, url, created_at, score, sentiment, sentiment_score, theme, reddit
 		FROM mentions WHERE 1=1` + where
 	if f.ID != "" {
 		q += " AND id = ?"
@@ -463,18 +471,23 @@ func (s *Store) Mentions(f MentionFilter) ([]*model.Mention, error) {
 	var out []*model.Mention
 	for rows.Next() {
 		var (
-			m                   model.Mention
-			author, title, text sql.NullString
-			url, sent, theme    sql.NullString
-			created             string
-			score               sql.NullInt64
-			sentScore           sql.NullFloat64
+			m                        model.Mention
+			author, title, text      sql.NullString
+			url, sent, theme, reddit sql.NullString
+			created                  string
+			score                    sql.NullInt64
+			sentScore                sql.NullFloat64
 		)
 		if err := rows.Scan(&m.ID, &m.Source, &m.Query, &author, &title, &text, &url, &created,
-			&score, &sent, &sentScore, &theme); err != nil {
+			&score, &sent, &sentScore, &theme, &reddit); err != nil {
 			return nil, err
 		}
 		m.Author, m.Title, m.URL, m.Theme = nullStr(author), nullStr(title), nullStr(url), nullStr(theme)
+		if reddit.Valid {
+			if err := json.Unmarshal([]byte(reddit.String), &m.Reddit); err != nil {
+				return nil, err
+			}
+		}
 		m.Text = text.String
 		m.CreatedAt = parseStamp(created)
 		if score.Valid {

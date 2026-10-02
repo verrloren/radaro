@@ -25,6 +25,7 @@ var migrations = []migration{
 	{6, projectKeywords},
 	{7, projectAccounts},
 	{8, accountHealth},
+	{9, replyWorkspace},
 }
 
 func baseline(tx *sql.Tx) error {
@@ -331,5 +332,15 @@ func (s *Store) Backup(ctx context.Context, dest string) error {
 	if err != nil {
 		os.Remove(dest)
 	}
+	return err
+}
+
+func replyWorkspace(tx *sql.Tx) error {
+	_, err := tx.Exec(`ALTER TABLE mentions ADD COLUMN reddit TEXT;
+ CREATE TABLE project_reply_settings (
+ project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+ settings TEXT NOT NULL, updated_at TEXT NOT NULL
+ );
+ CREATE INDEX idx_drafts_reply_mention ON drafts(user_id,project_id,mention_id,platform,kind);`)
 	return err
 }

@@ -8,6 +8,7 @@ import { DraftsList } from "./DraftsList";
 import { ErrorLine, Loading } from "./Status";
 
 interface Props {
+  initialId?: number;
   rev: number;
   onChanged: () => void;
 }
@@ -37,9 +38,9 @@ function headline(total: number, toReview: number, approved: number): string {
 }
 
 /** Drafts: the publishing queue — review, approve, skip and publish. */
-export function DraftsView({ rev, onChanged }: Readonly<Props>) {
-  const [tab, setTab] = useState<Tab>("draft");
-  const [selected, setSelected] = useState<number | null>(null);
+export function DraftsView({ rev, onChanged, initialId }: Readonly<Props>) {
+  const [tab, setTab] = useState<Tab>(initialId ? "all" : "draft");
+  const [selected, setSelected] = useState<number | null>(initialId ?? null);
   // A published draft leaves the Approved tab; this keeps its link in view.
   const [notice, setNotice] = useState<Notice | null>(null);
 

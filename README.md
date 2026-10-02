@@ -12,6 +12,7 @@
 - **Publishing with a human in the loop.** Drafts must be approved before `radaro publish` sends them. Replies go into the original thread, and engagement metrics are read back.
 - **Account health and limits.** Every account is checked in the background, has its own publishing limits, and can be paused; a draft without an account is published by the best one in the project's pool.
 - **Projects and accounts per user.** Sign in with email and password (JWT sessions) in the dashboard or the CLI. A project holds any number of keywords and a pool of accounts per platform, so two projects can post as different Reddit accounts.
+- **Reply from the dashboard.** Open a Reddit post with its score, comments and rules, then prepare a reply draft manually or with the configured LLM. Review and approve the final text before sending. Setup shows the LLM configuration and connection check status.
 - **Agent-friendly CLI.** The CLI talks to the server as the signed-in user, and every read command supports `--json`, so a coding agent (Claude Code, Codex, …) can find opportunities and write drafts for you to approve.
 
 ## Install

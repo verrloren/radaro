@@ -3426,3 +3426,21 @@ a.auth-back:hover {
   flex-wrap: wrap;
   justify-content: flex-end;
 }
+
+/* Reddit reading and reply preparation */
+.modal:has(.reddit-reply-dialog) { width: min(1000px, calc(100vw - 32px)); }
+.reddit-reply-dialog { display: grid; gap: 24px; }
+.reddit-post-stats { display: flex; flex-wrap: wrap; gap: 16px; padding-block: 12px; }
+.reddit-post-body { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }
+.reddit-post-content details { margin-block: 16px; }
+.reddit-post-content summary, .reply-settings summary { cursor: pointer; font-weight: 600; }
+.reddit-comments { display: grid; gap: 12px; margin-top: 16px; }
+.reddit-comments article { padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
+.reply-composer { border-top: 1px solid var(--line); padding-top: 20px; }
+.reply-settings .setup-form { margin-top: 16px; }
+.llm-status-card { margin-top: 24px; }
+.llm-connected { color: var(--pos); }
+.llm-error { color: var(--neg); }
+.mention-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+
+.publish-preview { padding: 16px; border: 1px solid var(--line); border-radius: 8px; max-height: 40vh; overflow: auto; }

@@ -33,23 +33,30 @@ func ParseSentiment(s string) (Sentiment, bool) {
 	return "", false
 }
 
+type RedditStats struct {
+	Community   string   `json:"community"`
+	Comments    *int64   `json:"comments"`
+	UpvoteRatio *float64 `json:"upvote_ratio,omitempty"`
+}
+
 // Mention is one thing someone said, somewhere, that matched a tracked query.
 //
 // ID is a stable content hash so the same item fetched twice (or by two
 // overlapping queries) de-duplicates cleanly in the store.
 type Mention struct {
-	ID             string    `json:"id"`
-	Source         string    `json:"source"`
-	Query          string    `json:"query"`
-	Author         *string   `json:"author"`
-	Title          *string   `json:"title"`
-	Text           string    `json:"text"`
-	URL            *string   `json:"url"`
-	CreatedAt      time.Time `json:"created_at"`
-	Score          *int64    `json:"score"`
-	Sentiment      Sentiment `json:"sentiment"`
-	SentimentScore *float64  `json:"sentiment_score"`
-	Theme          *string   `json:"theme"`
+	ID             string       `json:"id"`
+	Reddit         *RedditStats `json:"reddit,omitempty"`
+	Source         string       `json:"source"`
+	Query          string       `json:"query"`
+	Author         *string      `json:"author"`
+	Title          *string      `json:"title"`
+	Text           string       `json:"text"`
+	URL            *string      `json:"url"`
+	CreatedAt      time.Time    `json:"created_at"`
+	Score          *int64       `json:"score"`
+	Sentiment      Sentiment    `json:"sentiment"`
+	SentimentScore *float64     `json:"sentiment_score"`
+	Theme          *string      `json:"theme"`
 }
 
 // Content is title + body: the text analyzers actually read.

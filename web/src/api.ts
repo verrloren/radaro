@@ -1,4 +1,7 @@
 import type {
+  LLMStatus,
+  ReplySettings,
+  RedditPostResponse,
   Account,
   BrowserScreen,
   BrowserInput,
@@ -270,6 +273,19 @@ export const accountsApi = {
 };
 
 // ---------- Drafts: the publishing queue ----------
+
+export const replyApi = {
+ post: (mention: string, projectId?: number, signal?: AbortSignal) =>
+  request<RedditPostResponse>("GET", `/api/mentions/${encodeURIComponent(mention)}/reddit`, {params:{project_id:projectId},signal}),
+ prepare: (mention: string, projectId: number | undefined, body: {body?: string; generate?: boolean}, signal?: AbortSignal) =>
+  request<DraftDetail>("POST", `/api/mentions/${encodeURIComponent(mention)}/reply`, {params:{project_id:projectId},body,signal}),
+ settings: (projectId: number, signal?: AbortSignal) => request<ReplySettings>("GET", `/api/projects/${projectId}/reply-settings`,{signal}),
+ saveSettings: (projectId: number, body: ReplySettings) => request<ReplySettings>("PUT", `/api/projects/${projectId}/reply-settings`,{body}),
+};
+export const llmApi = {
+ status: (signal?: AbortSignal) => request<LLMStatus>("GET", "/api/settings/llm",{signal}),
+ check: () => request<LLMStatus>("POST", "/api/settings/llm/check"),
+};
 
 export const draftsApi = {
   list: (status: DraftStatus | undefined, signal?: AbortSignal) =>

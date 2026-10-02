@@ -9,6 +9,7 @@ import { Report } from "./components/Report";
 import { SentimentCard } from "./components/SentimentCard";
 import { VolumeChart } from "./components/VolumeChart";
 import { Themes } from "./components/Themes";
+import { LLMStatusCard } from "./components/LLMStatusCard";
 import { MentionsFeed } from "./components/MentionsFeed";
 import { EmptyState } from "./components/EmptyState";
 import { SourcesCard } from "./components/SourcesCard";
@@ -71,6 +72,7 @@ interface AppProps {
 export default function App({ user, onSignOut }: Readonly<AppProps>) {
   const [sel, setSel] = useState<Selection>(readUrl);
   const [rev, setRev] = useState(0);
+ const [openedDraft,setOpenedDraft] = useState<number | undefined>();
   const refresh = useCallback(() => setRev((r) => r + 1), []);
   const [notice] = useState(takeConnectNotice);
 
@@ -193,6 +195,8 @@ export default function App({ user, onSignOut }: Readonly<AppProps>) {
                   lookup={lookup}
                   source={source}
                   onSource={setSource}
+ projectId={sel.p ?? undefined}
+ onDraft={(d)=>{setOpenedDraft(d.id);refresh();select({p:d.project_id,q:null,v:"drafts"});}}
                 />
               </>
             )}
@@ -215,7 +219,7 @@ export default function App({ user, onSignOut }: Readonly<AppProps>) {
         )}
         {sel.v === "drafts" && (
           <section className="view" aria-label="Drafts" key="drafts">
-            <DraftsView rev={rev} onChanged={refresh} />
+            <DraftsView rev={rev} onChanged={refresh} initialId={openedDraft} />
           </section>
         )}
         {sel.v === "accounts" && (
@@ -256,6 +260,7 @@ export default function App({ user, onSignOut }: Readonly<AppProps>) {
                 onChanged={refresh}
               />
             </div>
+            <LLMStatusCard isAdmin={user.is_admin} />
             {user.is_admin && <ProxySettingsForm onChanged={refresh} />}
           </section>
         )}

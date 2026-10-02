@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from "react";
+import { RedditReplyDialog } from "./RedditReplyDialog";
 import { api } from "../api";
 import { useAsync } from "../hooks";
 import type { SourceLookup } from "../sources";
-import type { Mention, Scope, Sentiment, Summary } from "../types";
+import type { DraftDetail, Mention, Scope, Sentiment, Summary } from "../types";
 import { SENTIMENTS } from "../types";
 import { fmtDateTime, fmtNum, relTime } from "../format";
 import { SourceIcon } from "./SourceBadge";
@@ -19,10 +20,13 @@ interface Props {
   lookup: SourceLookup;
   source: string | null;
   onSource: (s: string | null) => void;
+ projectId?: number;
+ onDraft?: (d: DraftDetail)=>void;
 }
 
-export function MentionsFeed({ scope, rev, summary, lookup, source, onSource }: Props) {
-  const [sentiment, setSentiment] = useState<Sentiment | null>(null);
+export function MentionsFeed({ scope, rev, summary, lookup, source, onSource, projectId, onDraft }: Props) {
+  const [reply,setReply]=useState<{mention:Mention;compose:boolean}|null>(null);
+ const [sentiment, setSentiment] = useState<Sentiment | null>(null);
 
   const mentions = useAsync(
     (s) => api.mentions(scope, { sentiment: sentiment ?? undefined, source: source ?? undefined, limit: LIMIT }, s),
@@ -113,9 +117,10 @@ export function MentionsFeed({ scope, rev, summary, lookup, source, onSource }: 
 
       <ul className={`feed${mentions.loading ? " is-stale" : ""}`}>
         {list.map((m) => (
-          <MentionItem key={m.id} m={m} lookup={lookup} />
+          <MentionItem key={m.id} m={m} lookup={lookup} onReply={(compose)=>setReply({mention:m,compose})} />
         ))}
       </ul>
+ {reply && <RedditReplyDialog mention={reply.mention} projectId={projectId} compose={reply.compose} onClose={()=>setReply(null)} onDraft={(d)=>{setReply(null);onDraft?.(d);}} />}
     </section>
   );
 }
@@ -129,7 +134,7 @@ function Chip({ active, onClick, count, children }: { active: boolean; onClick: 
   );
 }
 
-function MentionItem({ m, lookup }: { m: Mention; lookup: SourceLookup }) {
+function MentionItem({ m, lookup, onReply }: { m: Mention; lookup: SourceLookup; onReply:(compose:boolean)=>void }) {
   const [open, setOpen] = useState(false);
   const long = m.text.length > CLAMP_CHARS || m.text.split("\n").length > 5;
   const src = { ...lookup(m.source), name: m.source, ...(m.source_label ? { label: m.source_label } : {}) };
@@ -160,18 +165,22 @@ function MentionItem({ m, lookup }: { m: Mention; lookup: SourceLookup }) {
             {sent !== "unscored" && <span aria-hidden="true">{ARROW[sent]}</span>}
             {sent}
           </span>
+          {m.reddit?.community && <span className="tag">r/{m.reddit.community}</span>}
+ {m.reddit?.comments != null && <span className="small">{fmtNum(m.reddit.comments)} comments</span>}
+ {m.reddit?.upvote_ratio != null && <span className="small">{Math.round(m.reddit.upvote_ratio*100)}% upvoted</span>}
           {m.theme ? <span className="tag">{m.theme}</span> : <span className="tag tag-empty">no theme</span>}
           {m.score !== null && (
-            <span className="num score" title="Score">
+            <span className="num score" title="Reddit score">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M6 15l6-6 6 6" />
               </svg>
-              {fmtNum(m.score)}
+              {m.source === "reddit" ? "Score: " : ""}{fmtNum(m.score)}
             </span>
           )}
         </div>
       </div>
       <div className="mention-actions">
+ {m.source === "reddit" && m.url && <><button type="button" className="btn ghost sm" onClick={()=>onReply(false)}>Read post</button><button type="button" className="btn sm" onClick={()=>onReply(true)}>Reply</button></>}
         {m.url && (
           <a href={m.url} target="_blank" rel="noopener noreferrer" className="link">
             View source

@@ -32,7 +32,7 @@ func TestWebsiteSearchPublishingAndCommentMetrics(t *testing.T) {
 		io.WriteString(w, `<div id="header-bottom-right"><span class="user"><a href="/user/alice">alice</a></span></div>`)
 		switch {
 		case r.URL.Path == "/search":
-			io.WriteString(w, `<div class="search-result-listing"><div class="search-result-link"><a class="search-title">Found post</a><div class="search-result-body">Body</div><a class="search-author">bob</a><a class="search-comments" href="/r/go/comments/abc/title/">comments</a><time datetime="2026-09-30T12:00:00Z"></time><span class="search-score">12 points</span></div></div><span class="nav-buttons"><a href="/search?after=t3_abc">next</a></span>`)
+			io.WriteString(w, `<div class="search-result-listing"><div class="search-result-link"><a class="search-title">Found post</a><div class="search-result-body">Body</div><a class="search-author">bob</a><a class="search-subreddit-link">r/go</a><a class="search-comments" href="/r/go/comments/abc/title/">15 comments</a><time datetime="2026-09-30T12:00:00Z"></time><span class="search-score">12 points</span></div></div><span class="nav-buttons"><a href="/search?after=t3_abc">next</a></span>`)
 		case strings.HasSuffix(r.URL.Path, "/submit"):
 			io.WriteString(w, `<input name="title"><textarea name="text"></textarea><button name="submit" onclick="fetch('/record',{method:'POST',body:document.querySelector('[name=title]').value+'|'+document.querySelector('textarea').value}).then(()=>location.href='/r/go/comments/new/title/')">Submit</button>`)
 		case strings.Contains(r.URL.Path, "/comments/") || strings.HasPrefix(r.URL.Path, "/by_id/"):
@@ -53,6 +53,9 @@ func TestWebsiteSearchPublishingAndCommentMetrics(t *testing.T) {
 	}
 	if page.Next != "t3_abc" || page.Mentions[0].CreatedAt.IsZero() || *page.Mentions[0].Score != 12 || !strings.HasPrefix(page.Mentions[0].URL, "https://www.reddit.com/") {
 		t.Fatalf("search result: %+v", page)
+	}
+	if page.Mentions[0].Community != "go" || page.Mentions[0].Comments == nil || *page.Mentions[0].Comments != 15 {
+		t.Fatal("missing search statistics")
 	}
 	metrics, err := Metrics(ctx, c, "https://www.reddit.com/r/go/comments/abc/title/def/")
 	if err != nil || metrics["score"] != float64(-2) || metrics["removed"] != true {

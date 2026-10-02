@@ -40,7 +40,7 @@ func (s *Reddit) FetchPage(ctx context.Context, query string, limit int, cursor 
 			if !since.IsZero() && !d.CreatedAt.IsZero() && d.CreatedAt.Before(since) {
 				continue
 			}
-			m := model.Mention{Source: "reddit", Query: query, Author: model.Str(d.Author), Title: model.Str(d.Title), Text: d.Body, URL: model.Str(d.URL), CreatedAt: d.CreatedAt, Score: d.Score}
+			m := model.Mention{Source: "reddit", Query: query, Author: model.Str(d.Author), Title: model.Str(d.Title), Text: d.Body, URL: model.Str(d.URL), CreatedAt: d.CreatedAt, Score: d.Score, Reddit: &model.RedditStats{Community: d.Community, Comments: d.Comments}}
 			m.Normalize()
 			out.Mentions = append(out.Mentions, m)
 		}
@@ -66,13 +66,16 @@ func (s *Reddit) FetchPage(ctx context.Context, query string, limit int, cursor 
 		Data struct {
 			Children []struct {
 				Data struct {
-					Author     string   `json:"author"`
-					Title      string   `json:"title"`
-					Selftext   string   `json:"selftext"`
-					Permalink  string   `json:"permalink"`
-					URL        string   `json:"url"`
-					CreatedUTC float64  `json:"created_utc"`
-					Score      *float64 `json:"score"`
+					Author      string   `json:"author"`
+					Title       string   `json:"title"`
+					Selftext    string   `json:"selftext"`
+					Permalink   string   `json:"permalink"`
+					URL         string   `json:"url"`
+					CreatedUTC  float64  `json:"created_utc"`
+					Score       *float64 `json:"score"`
+					Subreddit   string   `json:"subreddit"`
+					NumComments *int64   `json:"num_comments"`
+					UpvoteRatio *float64 `json:"upvote_ratio"`
 				} `json:"data"`
 			} `json:"children"`
 			After string `json:"after"`
@@ -103,6 +106,7 @@ func (s *Reddit) FetchPage(ctx context.Context, query string, limit int, cursor 
 			URL:       model.Str(link),
 			CreatedAt: unixTime(int64(d.CreatedUTC)),
 			Score:     score,
+			Reddit:    &model.RedditStats{Community: d.Subreddit, Comments: d.NumComments, UpvoteRatio: d.UpvoteRatio},
 		}
 		m.Normalize()
 		mentions = append(mentions, m)

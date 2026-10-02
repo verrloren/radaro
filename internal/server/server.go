@@ -19,6 +19,7 @@ import (
 
 	"github.com/verrloren/radaro/internal/auth"
 	"github.com/verrloren/radaro/internal/config"
+	"github.com/verrloren/radaro/internal/llm"
 	"github.com/verrloren/radaro/internal/model"
 	"github.com/verrloren/radaro/internal/netproxy"
 	"github.com/verrloren/radaro/internal/outbox"
@@ -40,6 +41,10 @@ type Server struct {
 	limiter           *limiter
 	outbox            *outbox.Service
 	browserLogins     browserLogins
+	replyRequests     replyRequests
+	llmConnection     llmConnection
+	newLLM            func() (llm.Provider, error)
+	loadRedditPost    func(context.Context, redditbrowser.Credentials, string) (redditbrowser.PostDetails, error)
 	openRedditBrowser func(context.Context, string, bool) (redditBrowser, error)
 
 	// connect and redditExchange reach the platforms; tests replace them.
@@ -63,7 +68,9 @@ func New(cfg *config.Config, st *store.Store, version string, assets fs.FS) (*Se
 	}
 	s := &Server{
 		cfg: cfg, store: st, version: version, assets: assets, auth: a, limiter: newLimiter(10, 10),
-		connect: publish.Connect,
+		connect:        publish.Connect,
+		newLLM:         func() (llm.Provider, error) { return llm.New(cfg.LLM) },
+		loadRedditPost: redditbrowser.Details,
 		openRedditBrowser: func(ctx context.Context, proxy string, login bool) (redditBrowser, error) {
 			return redditbrowser.Open(ctx, proxy, login)
 		},
@@ -106,6 +113,8 @@ func (s *Server) Handler() http.Handler {
 			r.Patch("/projects/{id}", s.renameProject)
 			r.Delete("/projects/{id}", s.deleteProject)
 			r.Get("/projects/{id}/keywords", s.keywords)
+			r.Get("/projects/{id}/reply-settings", s.getReplySettings)
+			r.Put("/projects/{id}/reply-settings", s.saveReplySettings)
 			r.Post("/projects/{id}/keywords", s.addKeywords)
 			r.Delete("/projects/{id}/keywords/{kid}", s.removeKeyword)
 			r.Get("/projects/{id}/accounts", s.projectAccounts)
@@ -114,6 +123,8 @@ func (s *Server) Handler() http.Handler {
 			r.Delete("/projects/{id}/accounts/{platform}/{account_id}", s.unbindProjectAccount)
 			r.Get("/summary", s.summary)
 			r.Get("/mentions", s.mentions)
+			r.Get("/mentions/{mention}/reddit", s.redditPostDetails)
+			r.Post("/mentions/{mention}/reply", s.prepareReply)
 			r.Post("/track", s.track)
 			r.Get("/report", s.report)
 			r.Get("/export", s.export)
@@ -131,6 +142,8 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/drafts/{id}/publish", s.publishDraft)
 			r.Get("/stats", s.stats)
 			r.Get("/settings/sources", s.listSourceSettings)
+			r.Get("/settings/llm", s.getLLMStatus)
+			r.With(s.requireAdmin).Post("/settings/llm/check", s.checkLLM)
 			r.With(s.requireAdmin).Get("/settings/proxy", s.proxySettings)
 			r.With(s.requireAdmin).Put("/settings/proxy", s.saveProxySettings)
 			r.With(s.requireAdmin).Delete("/settings/proxy", s.deleteProxySettings)

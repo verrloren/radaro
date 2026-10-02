@@ -231,6 +231,30 @@ describe("DraftsEditor", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
+  it("approves and publishes a Reddit reply only after confirming its final text", async () => {
+    const approve=vi.spyOn(draftsApi,"approve").mockResolvedValue(draft({kind:"reply",status:"approved"}));
+    const publish=vi.spyOn(draftsApi,"publish").mockImplementation(async()=>{
+      expect(approve).toHaveBeenCalledWith(7);
+      return {draft:draft({kind:"reply",status:"published"}),account:account()};
+    });
+    const {user}=setup(draft({kind:"reply",title:null,reply_to:"https://reddit.com/r/go/comments/abc/title/",plan:livePlan}));
+    await user.click(await screen.findByRole("button",{name:"Approve & publish…"}));
+    expect(approve).not.toHaveBeenCalled();expect(publish).not.toHaveBeenCalled();
+    const dialog=screen.getByRole("dialog",{name:"Approve and publish this draft?"});
+    await user.click(within(dialog).getByRole("button",{name:"Approve & publish now"}));
+    await waitFor(()=>expect(publish).toHaveBeenCalledWith(7));
+  });
+
+  it("does not publish when approval fails",async()=>{
+    vi.spyOn(draftsApi,"approve").mockRejectedValue(new ApiError(409,"Cannot approve"));
+    const publish=vi.spyOn(draftsApi,"publish");
+    const {user}=setup(draft({kind:"reply",title:null,plan:livePlan}));
+    await user.click(await screen.findByRole("button",{name:"Approve & publish…"}));
+    await user.click(screen.getByRole("button",{name:"Approve & publish now"}));
+    expect(await screen.findAllByText("Cannot approve")).not.toHaveLength(0);
+    expect(publish).not.toHaveBeenCalled();
+  });
+
   it("keeps the dialog open with the reason when a limit refuses the publish", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date(2026, 8, 30, 9, 0));

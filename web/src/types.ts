@@ -12,7 +12,14 @@ export interface SourceInfo {
   configured: boolean;
 }
 
+export interface RedditStats {
+ community: string;
+ comments: number | null;
+ upvote_ratio?: number | null;
+}
+
 export interface Mention {
+ reddit?: RedditStats;
   id: string;
   source: string;
   source_label: string;
@@ -389,3 +396,18 @@ export interface PublishResult {
   draft: Draft;
   account: Account;
 }
+
+export interface LLMStatus {
+ provider: string; model: string; configured: boolean;
+ status: "not_configured" | "unchecked" | "connected" | "error";
+ checked_at: string | null; detail: string;
+}
+export interface ReplySettings { brief: string; language: string; tone: string; }
+export interface RedditComment { author: string; body: string; score: number | null; url: string; }
+export interface RedditPostDetails {
+ url: string; title: string; body: string; author: string; community: string; created_at: string | null;
+ score: number | null; comments: number | null; upvote_ratio: number | null; flair: string;
+ locked: boolean; archived: boolean; removed: boolean; nsfw: boolean; can_reply: boolean;
+ replies: RedditComment[]; rules: {name: string; description: string}[]; fetched_at: string;
+}
+export interface RedditPostResponse { post: RedditPostDetails; project_id: number; draft?: DraftDetail | null; }

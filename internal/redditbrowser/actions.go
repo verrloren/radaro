@@ -139,6 +139,8 @@ func (s *Session) reply(ctx context.Context, username string, p Post, out *Resul
 }
 
 type Mention struct {
+	Community string    `json:"community"`
+	Comments  *int64    `json:"comments"`
 	Title     string    `json:"title"`
 	Body      string    `json:"body"`
 	Author    string    `json:"author"`
@@ -167,7 +169,7 @@ func Search(ctx context.Context, c Credentials, q, cursor string, limit int) (Se
 		if err := s.Navigate(ctx, site+"/search?"+params.Encode()); err != nil {
 			return err
 		}
-		js := `(()=>{const rows=Array.from(document.querySelectorAll('.search-result-link'));const text=(n,s)=>n.querySelector(s)?.textContent?.trim()||''; const mentions=rows.map(n=>({title:text(n,'.search-title'),body:text(n,'.search-result-body'),author:text(n,'.search-author'),url:(n.querySelector('.search-comments')||n.querySelector('.search-title'))?.href||'',created_at:n.querySelector('time')?.dateTime||null,score:(text(n,'.search-score').match(/-?\d+/)||[])[0]}));let next='';const a=Array.from(document.querySelectorAll('.nav-buttons a,.nextprev a')).find(a=>/next/i.test(a.textContent));if(a)next=new URL(a.href).searchParams.get('after')||'';return {mentions:mentions.map(m=>({...m,score:m.score===undefined?null:Number(m.score)})),next};})()`
+		js := `(()=>{const rows=Array.from(document.querySelectorAll('.search-result-link'));const text=(n,s)=>n.querySelector(s)?.textContent?.trim()||''; const mentions=rows.map(n=>({title:text(n,'.search-title'),body:text(n,'.search-result-body'),author:text(n,'.search-author'),url:(n.querySelector('.search-comments')||n.querySelector('.search-title'))?.href||'',created_at:n.querySelector('time')?.dateTime||null,score:(text(n,'.search-score').replace(/,/g,'').match(/-?\d+/)||[])[0],community:text(n,'.search-subreddit-link').replace(/^r\//,''),comments:(text(n,'.search-comments').replace(/,/g,'').match(/\d+/)||[])[0]}));let next='';const a=Array.from(document.querySelectorAll('.nav-buttons a,.nextprev a')).find(a=>/next/i.test(a.textContent));if(a)next=new URL(a.href).searchParams.get('after')||'';return {mentions:mentions.map(m=>({...m,score:m.score===undefined?null:Number(m.score),comments:m.comments===undefined?null:Number(m.comments)})),next};})()`
 		if err := s.run(ctx, chromedp.Evaluate(js, &out)); err != nil {
 			return err
 		}

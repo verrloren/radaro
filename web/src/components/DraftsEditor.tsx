@@ -180,6 +180,7 @@ function DraftForm({ d, accounts, warnings, onChanged, onNotice }: Readonly<Form
   const publish = () =>
     run(
       async () => {
+        if (d.status !== "approved") await draftsApi.approve(d.id);
         const res = await draftsApi.publish(d.id);
         onNotice({ text: `Published draft ${d.id} as ${res.account.handle}.`, url: res.draft.remote_url ?? undefined });
       },
@@ -226,6 +227,7 @@ function DraftForm({ d, accounts, warnings, onChanged, onNotice }: Readonly<Form
         {editable && (
           <DraftActions
             status={d.status}
+            approveAndPublish={d.platform === "reddit" && d.kind === "reply"}
             dirty={form.dirty}
             busy={busy}
             onDiscard={form.reset}
@@ -511,10 +513,11 @@ interface ActionsProps {
   onDiscard: () => void;
   onApprove: () => void;
   onPublish: () => void;
+  approveAndPublish?: boolean;
   onSkip: () => void;
 }
 
-function DraftActions({ status, dirty, busy, onDiscard, onApprove, onPublish, onSkip }: Readonly<ActionsProps>) {
+function DraftActions({ status, dirty, busy, onDiscard, onApprove, onPublish, onSkip, approveAndPublish }: Readonly<ActionsProps>) {
   if (dirty) {
     return (
       <div className="btn-row draft-actions">
@@ -532,8 +535,8 @@ function DraftActions({ status, dirty, busy, onDiscard, onApprove, onPublish, on
   return (
     <div className="btn-row draft-actions">
       {!approved && (
-        <button type="button" className="btn primary sm" disabled={busy} onClick={onApprove}>
-          {approveLabel(status)}
+        <button type="button" className="btn primary sm" disabled={busy} onClick={approveAndPublish && status !== "skipped" ? onPublish : onApprove}>
+          {approveAndPublish && status !== "skipped" ? "Approve & publish…" : approveLabel(status)}
         </button>
       )}
       <button
@@ -568,7 +571,7 @@ interface ConfirmProps {
 function PublishConfirm({ d, badge, handle, bansPromo, busy, error, onPublish, onCancel }: Readonly<ConfirmProps>) {
   const later = d.plan?.next_at ? when(d.plan.next_at) : "now";
   return (
-    <Modal title="Publish this draft?" onClose={() => !busy && onCancel()}>
+    <Modal title={d.status === "approved" ? "Publish this draft?" : "Approve and publish this draft?"} onClose={() => !busy && onCancel()}>
       <div className="setup-form">
         <p>
           This {kindLabel(d)} goes out publicly on <span className="strong">{badge.label}</span>
@@ -583,12 +586,15 @@ function PublishConfirm({ d, badge, handle, bansPromo, busy, error, onPublish, o
           )}
           . Radaro cannot remove it from the platform after publishing.
         </p>
+        {d.reply_to && <p className="small">Replying to <a className="link" href={d.reply_to} target="_blank" rel="noopener noreferrer">{d.reply_to}</a></p>}
+        {d.title && <h3>{d.title}</h3>}
+        <div className="publish-preview reddit-post-body">{d.body}</div>
         {later !== "now" && <p className="muted small">The limits say it can go out {later}; publishing earlier will be refused.</p>}
         {bansPromo && <p className="muted small">This subreddit restricts self-promotion; make sure the post follows its rules.</p>}
         <ErrorLine error={error} />
         <div className="btn-row">
           <button type="button" className="btn primary sm" disabled={busy} onClick={onPublish}>
-            {busy ? "Publishing…" : "Publish now"}
+            {busy ? "Publishing…" : d.status === "approved" ? "Publish now" : "Approve & publish now"}
           </button>
           <button type="button" className="btn ghost sm" disabled={busy} onClick={onCancel}>
             Cancel
