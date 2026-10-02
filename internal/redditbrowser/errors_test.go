@@ -20,6 +20,8 @@ func TestBrowserOperationErrorsHideSensitiveDetails(t *testing.T) {
 		{"Execution context was destroyed", "page changed"},
 		{"page load error net::ERR_ABORTED", "page changed"},
 		{"websocket: close 1006", "browser connection closed"},
+		{"page load error net::ERR_EMPTY_RESPONSE", "page load failed (ERR_EMPTY_RESPONSE)"},
+		{"page load error net::ERR_HTTP_RESPONSE_CODE_FAILURE", "page load failed (ERR_HTTP_RESPONSE_CODE_FAILURE)"},
 		{"unknown error", "browser command failed"},
 	} {
 		t.Run(tc.raw, func(t *testing.T) {

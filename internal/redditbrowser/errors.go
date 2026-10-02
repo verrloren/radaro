@@ -3,8 +3,11 @@ package redditbrowser
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 )
+
+var browserNetworkCode = regexp.MustCompile(`^page load error net::(ERR_[A-Z_]+)\b`)
 
 // Chromium errors can contain URLs, proxy credentials or submitted text.
 // Only fixed descriptions and known network codes may reach callers or logs.
@@ -43,6 +46,10 @@ func browserOperationError(ctx, browser context.Context, err error) error {
 			message = "Reddit page changed during the browser operation; try loading again"
 		case strings.Contains(raw, "websocket: close"), strings.Contains(raw, "target closed"), strings.Contains(raw, "could not dial"), strings.Contains(raw, "inspector.detached"):
 			message = "Reddit browser connection closed; try loading again"
+		default:
+			if code := browserNetworkCode.FindStringSubmatch(raw); len(code) == 2 {
+				message = "Reddit page load failed (" + code[1] + "); check the connection or account proxy"
+			}
 		}
 	}
 	return &operationError{message: message, cause: err}
