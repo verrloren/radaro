@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { llmApi, replyApi, ApiError } from "../api";
@@ -69,7 +69,7 @@ describe("Reddit reply preparation",()=>{
     expect(prepare).not.toHaveBeenCalled();
     await userEvent.type(brief,"My product: verified benefits and a link");
     await userEvent.type(screen.getByLabelText("Comment instructions"),"Focus on the author's stated problem");
-    expect((screen.getByRole("button",{name:"Prepare with LLM"}) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button",{name:"Save context & prepare"}) as HTMLButtonElement).disabled).toBe(false);
     expect(prepare).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button",{name:"Save reply context"}));
     await waitFor(()=>expect((screen.getByLabelText("Comment") as HTMLTextAreaElement).value).toBe("Product-aware reply"));
@@ -88,6 +88,52 @@ describe("Reddit reply preparation",()=>{
     await userEvent.click(btn);
     await waitFor(()=>expect((screen.getByLabelText("Comment") as HTMLTextAreaElement).value).toBe("New draft"));
     expect(prepare.mock.calls[0][2]).toEqual({generate:true,regenerate:true,draft_id:d.id});
+  });
+  it("saves changed context before regenerating an existing draft with one click",async()=>{
+    const d=draft({kind:"reply",body:"Old draft"});
+    vi.spyOn(replyApi,"post").mockResolvedValue({post,project_id:3,draft:d});
+    vi.spyOn(llmApi,"status").mockResolvedValue({...status,configured:true,status:"connected"});
+    const prepare=vi.spyOn(replyApi,"prepare").mockResolvedValue({...d,body:"Updated context reply"});
+    let finishSave: (() => void) | undefined;
+    const save=vi.spyOn(replyApi,"saveSettings").mockImplementation((_pid,value)=>new Promise(resolve=>{finishSave=()=>resolve(value);}));
+    render(<RedditReplyDialog mention={mention} compose onClose={vi.fn()} onDraft={vi.fn()} />);
+    await userEvent.type(await screen.findByLabelText("Comment instructions"),"Address the pricing question");
+    const btn=screen.getByRole("button",{name:"Save context & regenerate"}) as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+    await userEvent.click(btn);
+    await waitFor(()=>expect(save).toHaveBeenCalledWith(3,expect.objectContaining({instructions:"Address the pricing question"})));
+    expect(prepare).not.toHaveBeenCalled();
+    expect((screen.getByLabelText("Comment") as HTMLTextAreaElement).value).toBe("Old draft");
+    await act(async()=>{finishSave?.();});
+    await waitFor(()=>expect((screen.getByLabelText("Comment") as HTMLTextAreaElement).value).toBe("Updated context reply"));
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(prepare.mock.calls[0][2]).toEqual({generate:true,regenerate:true,draft_id:d.id});
+    expect(screen.getByText("Saved")).toBeTruthy();
+  });
+  it("keeps the comment and skips generation when saving changed context fails",async()=>{
+    const d=draft({kind:"reply",body:"My edited comment"});
+    vi.spyOn(replyApi,"post").mockResolvedValue({post,project_id:3,draft:d});
+    vi.spyOn(llmApi,"status").mockResolvedValue({...status,configured:true,status:"connected"});
+    const prepare=vi.spyOn(replyApi,"prepare");
+    vi.spyOn(replyApi,"saveSettings").mockRejectedValue(new ApiError(422,"Reply instructions are too long"));
+    render(<RedditReplyDialog mention={mention} compose onClose={vi.fn()} onDraft={vi.fn()} />);
+    await userEvent.type(await screen.findByLabelText("Comment instructions"),"Updated instructions");
+    await userEvent.click(screen.getByRole("button",{name:"Save context & regenerate"}));
+    await waitFor(()=>expect(screen.getAllByText("Reply instructions are too long").length).toBeGreaterThan(0));
+    expect(prepare).not.toHaveBeenCalled();
+    expect((screen.getByLabelText("Comment") as HTMLTextAreaElement).value).toBe("My edited comment");
+    expect((screen.getByRole("button",{name:"Save context & regenerate"}) as HTMLButtonElement).disabled).toBe(false);
+  });
+  it("saves new context and prepares exactly one new draft",async()=>{
+    vi.spyOn(llmApi,"status").mockResolvedValue({...status,configured:true,status:"connected"});
+    const prepare=vi.spyOn(replyApi,"prepare").mockResolvedValue(draft({body:"New product reply"}));
+    vi.spyOn(replyApi,"saveSettings").mockImplementation(async(_pid,value)=>value);
+    render(<RedditReplyDialog mention={mention} compose onClose={vi.fn()} onDraft={vi.fn()} />);
+    await userEvent.type(await screen.findByLabelText("What to promote"),"Verified product description");
+    await userEvent.click(screen.getByRole("button",{name:"Save context & prepare"}));
+    await waitFor(()=>expect((screen.getByLabelText("Comment") as HTMLTextAreaElement).value).toBe("New product reply"));
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(prepare.mock.calls[0][2]).toEqual({generate:true});
   });
   it("preserves manually typed text when project context is saved",async()=>{
     vi.spyOn(llmApi,"status").mockResolvedValue({...status,configured:true,status:"connected"});

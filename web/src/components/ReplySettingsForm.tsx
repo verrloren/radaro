@@ -1,8 +1,12 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useImperativeHandle, useState, type Ref } from "react";
 import { replyApi, errorMessage } from "../api";
 import { useAsync } from "../hooks";
 import type { ReplySettings } from "../types";
 import { ErrorLine, Loading } from "./Status";
+
+export interface ReplySettingsFormHandle {
+  save: () => Promise<ReplySettings>;
+}
 
 interface Props {
   projectId: number;
@@ -10,15 +14,17 @@ interface Props {
   disabled?: boolean;
   onReady?: (settings: ReplySettings) => void;
   onDirty?: (dirty: boolean) => void;
+  ref?: Ref<ReplySettingsFormHandle>;
 }
 
 export function ReplySettingsForm(props: Readonly<Props>) {
-  const settings = useAsync((s) => replyApi.settings(props.projectId, s), [props.projectId]);
-  if (!settings.data) return <>{settings.loading && <Loading label="Loading reply context" />}<ErrorLine error={settings.error} /></>;
+  const [rev, setRev] = useState(0);
+  const settings = useAsync((s) => replyApi.settings(props.projectId, s), [props.projectId, rev]);
+  if (!settings.data) return <>{settings.loading && <Loading label="Loading reply context" />}<ErrorLine error={settings.error} onRetry={() => setRev((v) => v + 1)} /></>;
   return <Fields key={props.projectId} {...props} initial={settings.data} />;
 }
 
-function Fields({ projectId, initial, expanded, disabled, onReady, onDirty }: Readonly<Props & {initial: ReplySettings}>) {
+function Fields({ projectId, initial, expanded, disabled, onReady, onDirty, ref }: Readonly<Props & {initial: ReplySettings}>) {
   const id = useId();
   const [value, setValue] = useState(initial);
   const [busy, setBusy] = useState(false);
@@ -39,9 +45,11 @@ function Fields({ projectId, initial, expanded, disabled, onReady, onDirty }: Re
       setSaved(true);
       onReady?.(settings);
       onDirty?.(false);
-    } catch (e) { setError(errorMessage(e)); }
+      return settings;
+    } catch (e) { setError(errorMessage(e)); throw e; }
     finally { setBusy(false); }
   };
+  useImperativeHandle(ref, () => ({save}));
   return <details className="reply-settings" open={expanded || (!initial.brief.trim() && !initial.instructions?.trim())}>
     <summary>What to promote &amp; comment instructions</summary>
     <div className="setup-form">
@@ -58,7 +66,7 @@ function Fields({ projectId, initial, expanded, disabled, onReady, onDirty }: Re
       <div className="field"><label htmlFor={`${id}-language`}>Reply language</label><input type="text" id={`${id}-language`} maxLength={100} value={value.language} disabled={busy || disabled} onChange={(e) => field("language", e.target.value)} /></div>
       <div className="field"><label htmlFor={`${id}-tone`}>Tone</label><input type="text" id={`${id}-tone`} maxLength={500} value={value.tone} disabled={busy || disabled} onChange={(e) => field("tone", e.target.value)} /></div>
       <ErrorLine error={error} />
-      <div className="btn-row"><button type="button" className="btn ghost sm" disabled={busy || disabled} onClick={() => void save()}>{busy ? "Saving…" : "Save reply context"}</button>{saved && <span role="status">Saved</span>}</div>
+      <div className="btn-row"><button type="button" className="btn ghost sm" disabled={busy || disabled} onClick={() => { void save().catch(() => {}); }}>{busy ? "Saving…" : "Save reply context"}</button>{saved && <span role="status">Saved</span>}</div>
     </div>
   </details>;
 }
